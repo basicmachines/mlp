@@ -2,6 +2,7 @@
 """Neural network simulator
 
     @author: Bill Tubbs
+    Date: 24/2/2017
 
     This module provides classes to simulate Multi-Layer
     Perceptron (MLP) neural networks for machine learning
@@ -36,22 +37,9 @@ import matplotlib.pyplot as plt
 
 
 class MLPError(Exception):
-    """User-defined exception class for Multi-layer perceptron module."""
+    """Base class for exceptions in this module."""
     pass
 
-
-"""
-class MLPError(Exception):
-
-    # Shouldn't this call the parent class's init method?
-    # Not sure.  E.g. like this:
-    # super(self.__class__, self).__init__(value)!
-    def __init__(self, value):
-        self.value = value
-
-    def __str__(self):
-        return repr(self.values)
-"""
 
 # ---------------- ACTIVATION FUNCTION DEFINITIONS ---------------------
 
@@ -112,7 +100,6 @@ def d_sigmoid(y):
 # 2. ArcTan activation function and gradient
 arctan = np.arctan
 
-
 def arctan_gradient(z):
     """arctan_gradient(z) returns the derivative of the arctan
     activation function evaluated at z."""
@@ -123,12 +110,35 @@ def arctan_gradient(z):
 # 3. TanH activation function and gradient
 tanh = np.tanh
 
-
 def tanh_gradient(z):
     """tanh_gradient(z) returns the derivative of the tanh
     activation function evaluated at z."""
 
     return 1.0 - np.tanh(z)**2
+
+
+def d_tanh(y):
+    """derivative of the tanh function y = tanh(z)
+    but as a function of y.
+
+    Returns: 1 - y*y
+    """
+    return 1 - y*y
+
+
+# 4. Linear activation function and gradient
+
+def linear(z):
+    """linear(z) is a linear activation function
+    that returns z."""
+
+    return z
+
+def linear_gradient(z):
+    """linear_gradient(z) returns the derivative of the
+    linear activation which is 1.0."""
+
+    return 1.0
 
 
 # Set the defaul activation and gradient functions
@@ -188,7 +198,7 @@ class MLPLayer(object):
 
     Arguments:
     n_nodes -- the number of nodes in the layer (excluding the
-               bias term.
+               bias term).
 
     Keyword arguments:
     input_layer -- a reference to an MLPLayer object that provides
@@ -308,13 +318,23 @@ class MLPNetwork(object):
                           calculated correctly.
     """
 
-    def __init__(self, ndim, name=None, act_funcs=None, grad_funcs=None):
+    def __init__(self, ndim, name=None, act_funcs=None, grad_funcs=None,
+                 cost_function='mse'):
+
         self.name = name
         self.dimensions = ndim
         self.n_layers = len(ndim)
         self.n_inputs = ndim[0]
         self.n_outputs = ndim[-1]
         self.n_neurons = sum(self.dimensions[1:])
+
+        if cost_function == 'mse':
+            self.cost_function = self.cost_function_mse
+        elif cost_function == 'log':
+            self.cost_function = self.cost_function_log
+        else:
+            raise MLPError("Cost function choice '%s' not recognised" \
+                            % cost_function)
 
         # If act_funcs or grad_funcs keywords are not
         # provided, use the sigmoid function
@@ -331,8 +351,32 @@ class MLPNetwork(object):
             self.act_funcs = [None] + [act_funcs]*(self.n_layers - 1)
             self.grad_funcs = [None] + [grad_funcs]*(self.n_layers - 1)
         else:
-            self.act_funcs = [None] + act_funcs
-            self.grad_funcs = [None] + grad_funcs
+
+            # Check the act_funcs argument is the correct type
+            # and size
+            try:
+                assert isinstance(act_funcs, (list, tuple, np.ndarray))
+                assert not isinstance(act_funcs, str)
+                assert len(act_funcs) == self.n_layers - 1
+            except:
+                raise MLPError("act_funcs argument must be a single function "
+                               "or a list, tuple, or numpy.ndarray of correct "
+                               "size.")
+
+            self.act_funcs = [None] + list(act_funcs)
+
+            # Check the grad_funcs argument is the correct type
+            # and size
+            try:
+                assert isinstance(grad_funcs, (list, tuple, np.ndarray))
+                assert not isinstance(grad_funcs, str)
+                assert len(grad_funcs) == self.n_layers - 1
+            except:
+                raise MLPError("grad_funcs argument must be a single function "
+                               "or a list, tuple, or numpy.ndarray of correct "
+                               "size.")
+
+            self.grad_funcs = [None] + list(grad_funcs)
 
         # Initialise layers
         self.layers = []
@@ -353,6 +397,7 @@ class MLPNetwork(object):
 
         # Now initialise weights
         self.weights = np.zeros(self.n_weights, dtype=np.float)
+        self.gradients = None
 
         first = 0
         previous = self.layers[0]
@@ -386,7 +431,7 @@ class MLPNetwork(object):
                 np.random.rand(self.n_weights)*2.0 - 1
             )*epsilon
         else:
-            raise MLPError("Invalid value for keyword argument 'method'")
+            raise ValueError("Invalid value for keyword argument 'method'")
 
     def set_inputs(self, inputs):
         """def set_inputs(self, inputs):
@@ -442,7 +487,7 @@ class MLPNetwork(object):
         else:
 
             if weights.shape != (self.n_weights, ):
-                raise MLPError(
+                raise ValueError(
                     "Error: weights array provided was not the "
                     "correct shape. Should be " + (self.n_weights, )
                 )
@@ -474,11 +519,17 @@ class MLPNetwork(object):
 
         return theta
 
-    def cost_function(self, X, y, weights=None, lambda_param=0.0, jac=True):
+    def cost_function_log(self, X, y, weights=None, lambda_param=0.0, jac=True):
         """
-        (J, grad) = cost_function(X, y) computes the cost (J) and
-        gradients (grad) of the neural network using back-propagation
-        for a given set of training data (X, y).
+        (J, grad) = cost_function_log(X, y) computes the cost (J)
+        using the logistic cost function* and gradients (grad) of
+        the network using back-propagation for the given set of
+        training data (X, y).
+
+        *Note: This cost function is also known as the Bernoulli
+        negative log-likelihood and binary cross-entropy.  It
+        should only be used for problems such as classification
+        where y values are either 0.0 or 1.0.
 
         Arguments:
         X -- a set of training data points containing m rows of
@@ -521,6 +572,9 @@ class MLPNetwork(object):
             # Apply the activation function to ouput values
             # Note: only add the column of ones if it is a hidden
             # layer
+            #TODO: Wouldn't it be better to instantiate the
+            # A[]'s with the 1.0 values in place and then
+            # set the remaining values using an assignment?
             if j == self.n_layers - 1:
                 A[j] = layer.act_func(Z[j])
             else:
@@ -532,23 +586,13 @@ class MLPNetwork(object):
                     axis=1
                 )
 
-        # Check if output layer uses the sigmoid activation
-        # function
-        # TODO: actually the criteria for using this equation
-        # is whether the application is classification i.e.
-        # y can only be 0 or 1, similar to logistic regression).
-        # Check with the original Octave code as well.
-        if self.layers[-1].act_func is sigmoid:
-
-            # Logistic regression cost function (vectorized)
-            # This only works with the sigmoid (logistic) activation function
-            # or any function that does not return negative numbers
-            J = np.sum(-y*np.log(A[-1]) - (1.0 - y)*np.log(1.0 - A[-1]))/m
-            # %timeit returned 0.448 ms
-
-        else:
-            # Regular sum-of-squared errors cost function
-            J = 0.5*np.sum((A[-1] - y)**2)/m
+        # Logistic regression cost function (vectorized)
+        # This only works with the sigmoid (logistic) activation
+        # function or other functions that do not return negative
+        # numbers and should only be used when desired output
+        # values, y, satisfy 0.0 < y < 1.0
+        J = np.sum(-y*np.log(A[-1]) - (1.0 - y)*np.log(1.0 - A[-1]))/m
+        # %timeit returned 0.448 ms
 
         # Add regularization terms
         if lambda_param != 0.0:
@@ -567,8 +611,14 @@ class MLPNetwork(object):
 
         # sigma, delta and theta_grad arrays for each layer
         # will be stored in the following lists
+
+        # Errors at each node
         sigma = [None]*self.n_layers
+
+        # Changes to each weight
         delta = [None]*self.n_layers
+
+        # Partial derivatives of error w.r.t. each weight
         theta_grad = [None]*self.n_layers
 
         # Now initialise gradient arrays
@@ -596,12 +646,13 @@ class MLPNetwork(object):
         # For the output layer, sigma is the difference
         # between outputs and desired values (the output
         # error)
+        sigma[-1] = A[-1] - y
+
         # TODO: The gradients are not being calculated correctly
-        # for non-sigmoid activition functions.  Need to
+        # for sum-of-squares cost function.  Need to
         # Figure out why.  I think it might be something about
         # the following calculations which were from the
         # logistic regression example from Andrew Ng.
-        sigma[self.n_layers - 1] = A[self.n_layers - 1] - y
 
         # Iterate over the hidden layers to back-propagate
         # the errors
@@ -634,12 +685,183 @@ class MLPNetwork(object):
                         ),
                         axis=1
                     )
-            )/m
+            )*2/m  # TODO: Check. I added the '*2' during testing
 
-        # Return results
         return (J, grad)
         # %timeit returned 5.40 ms
 
+    def cost_function_mse(self, X, y, weights=None, lambda_param=0.0, jac=True):
+        """
+        (J, grad) = cost_function_mse(X, y) computes the cost (J)
+        using the mean-squared-error function* and gradients (grad)
+        of the network using back-propagation for the given set of
+        training data (X, y).
+
+        *Note: This cost function is also known as the maximum
+        likelihood or sum-squared error method.  It is generally
+        useful for regression and function approximation problems.
+
+        Arguments:
+        X -- a set of training data points containing m rows of
+               network input data
+        y -- a set of desired network outputs for the training
+               data containing m rows of output data
+
+        Keyword arguments:
+        weights       -- Provide a new set of weights to calculate the cost
+                         function (current network weights will not be
+                         affected).  If not specified, the cost function will
+                         use the current weights stored in the network.
+        lambda_param  -- Regularization term.  If not specified then default
+                         is lambda_param=0.0 (i.e. no regularization).
+        jac           -- If set to None or False then this function does not
+                         calculate or return the Jacobian matrix (of gradients).
+        """
+
+        # Number of training data points
+        m = X.shape[0]
+
+        # Get the weights of each layer as a list of 2-dimensional arrays,
+        # either from the network or from the set of weights provided.
+        theta = self.get_theta(weights=weights)
+
+        # Prepare list variables for feed-forward computations
+        A = [None]*self.n_layers
+        Z = [None]*self.n_layers
+
+        # Set A[0] to the input matrix (network inputs from training
+        # data) with a column of ones to simulate the bias terms
+        A[0] = np.concatenate((np.ones((m, 1), dtype=np.float), X), axis=1)
+
+        for j, layer in enumerate(self.layers[1:], start=1):
+
+            # Calculate output values of current layer based on
+            # outputs of previous layer
+            Z[j] = np.dot(A[j - 1], theta[j].T)
+
+            # Apply the activation function to ouput values
+            # Note: only add the column of ones if it is a hidden
+            # layer
+            #TODO: Wouldn't it be better to instantiate the
+            # A[]'s with the 1.0 values in place and then
+            # set the remaining values using an assignment?
+            # (A speed test I did suggests it would)
+            if j == self.n_layers - 1:
+                A[j] = layer.act_func(Z[j])
+            else:
+                A[j] = np.concatenate(
+                    (
+                        np.ones((m, 1), dtype=np.float),
+                        layer.act_func(Z[j])
+                    ),
+                    axis=1
+                )
+
+        # Regular mean-squared-error (MSE) cost function
+        J = 0.5*np.sum((A[-1] - y)**2)/m
+
+        # Add regularization terms
+        if lambda_param != 0.0:
+
+            for j, layer in enumerate(self.layers[1:], start=1):
+                J = J + lambda_param*np.sum(theta[j][:, 1:]**2)/(2.0*m)
+
+        # If jac is set to None or False then don't calculate
+        # the gradient
+        if not jac:
+            return J
+
+        # Otherwise, gradients will be returned in the array grad
+        # which has the same dimensions as weights
+        grad = np.zeros(self.n_weights, dtype=np.float)
+
+        # sigma, delta and theta_grad arrays for each layer
+        # will be stored in the following lists
+
+        # Errors at each node
+        sigma = [None]*self.n_layers
+
+        # Changes to each weight
+        delta = [None]*self.n_layers
+
+        # Partial derivatives of error w.r.t. each weight
+        theta_grad = [None]*self.n_layers
+
+        # Now initialise gradient arrays
+        first = 0
+        previous = self.layers[0]
+        for j, layer in enumerate(self.layers[1:], start=1):
+            last = first + previous.n_outputs*(layer.n_outputs - 1)
+            if last > self.n_weights:
+                raise MLPError(
+                    "Error initialising indices of gradients arrays."
+                )
+            theta_grad[j] = grad[first:last]
+
+            try:
+                theta_grad[j].shape = (layer.n_outputs - 1, previous.n_outputs)
+            except:
+                raise MLPError(
+                    "Error re-shaping the array of gradients "
+                    " for layer" + str(j)
+                )
+
+            previous = layer
+            first = last
+
+        # For the output layer, sigma is the difference
+        # between outputs and desired values (the output
+        # error)
+        sigma[-1] = A[-1] - y
+
+        # TODO: The gradients are not being calculated correctly
+        # for sum-of-squares cost function.  Need to do some
+        # reading on this.  The following calculations which are
+        # from the logistic regression example from Andrew Ng
+        # so obvious aren't correct.
+
+        # See:
+        """
+        http://www.philbrierley.com/main.html?code/bpproof.html&code/codeleft.html
+        """
+
+        # Iterate over the hidden layers to back-propagate
+        # the errors
+        for j in range(self.n_layers - 2, 0, -1):
+            sigma[j] = (
+                np.dot(sigma[j + 1], theta[j + 1]) *
+                # TODO: This could be speeded up using the
+                # dsigmoid function above instead
+                self.layers[j + 1].grad_func(
+                    np.concatenate(
+                        (
+                            np.ones((m, 1), dtype=np.float),
+                            Z[j]
+                        ),
+                        axis=1
+                    )
+                )
+            )[:, 1:]
+            raise MLPError("Stop!:")
+
+        # Calculate the deltas and gradients for each layer
+        for j, layer in enumerate(self.layers[1:], start=1):
+
+            #TODO: Does this need changing for MSE?
+            delta[j] = np.dot(sigma[j].T, A[j - 1])
+
+            theta_grad[j][:] = (
+                delta[j] + lambda_param * np.concatenate(
+                        (
+                            np.zeros((theta[j].shape[0], 1), dtype=np.float),
+                            theta[j][:, 1:]
+                        ),
+                        axis=1
+                    )
+            )/m  # Don't need '*2' here because J above has '0.5*'
+
+        return (J, grad)
+        # %timeit returned 5.40 ms
 
     def predict(self, inputs, weights=None):
         """predict produces a set of predictions using the neural network
@@ -693,23 +915,33 @@ class MLPNetwork(object):
 
         s.append("ndim=%s" % self.dimensions.__repr__())
 
-        if all(map(lambda x: x is self.act_funcs[1], self.act_funcs[1:])):
-            if self.act_funcs[1] is not default_act_func:
-                s.append("act_funcs=%s" % self.act_funcs[1].__repr__())
-        else:
-            s.append("act_funcs=%s" % self.act_funcs.__repr__())
+        if self.n_neurons > 0:
+            if all(map(lambda x: x is self.act_funcs[1], self.act_funcs[1:])):
+                if self.act_funcs[1] is not default_act_func:
+                    s.append("act_funcs=%s" % self.act_funcs[1].__repr__())
+            else:
+                s.append("act_funcs=%s" % self.act_funcs.__repr__())
 
-        if all(map(lambda x: x is self.grad_funcs[1], self.grad_funcs[1:])):
-            if self.grad_funcs[1] is not default_grad_func:
-                s.append("grad_funcs=%s" % self.grad_funcs[1].__repr__())
-        else:
-            s.append("grad_funcs=%s" % self.grad_funcs.__repr__())
+            if all(map(lambda x: x is self.grad_funcs[1], self.grad_funcs[1:])):
+                if self.grad_funcs[1] is not default_grad_func:
+                    s.append("grad_funcs=%s" % self.grad_funcs[1].__repr__())
+            else:
+                s.append("grad_funcs=%s" % self.grad_funcs.__repr__())
 
         try:
             if self.name is not None:
                 s.append("name=%s" % self.name.__repr__())
         except AttributeError:
             pass
+
+        if self.cost_function == self.cost_function_log:
+            cost_function = 'log'
+        elif self.cost_function == self.cost_function_mse:
+            cost_function = 'mse'
+        else:
+            raise MLPError("Unrecognised cost function assigned to network.")
+
+        s.append("cost_function=%s" % cost_function.__repr__())
 
         return "MLPNetwork(" + ", ".join(s) + ")"
 
@@ -802,9 +1034,27 @@ class MLPTrainingData(object):
                array.
     outputs -- Similar to inputs above, a separate array of
                output values.  If inputs and outputs are
-               specified do not use data and ndim.
+               specified, do not use data and ndim.
     scaling -- If True, then the input data is normalized
-               otherwise None."""
+               otherwise None.
+
+    Attributes:
+    n_in      -- (int) number of values in input data
+    n_out     -- (int) number of values in output data
+    data      -- (ndarray) array of training data.  First n_in
+                 columns are the input data.  Last n_out
+                 columns are the output data.  If training
+                 data was initialised using two separate arrays
+                 (inputs, outputs) instead of data, then data
+                 will be set to None.
+    inputs    -- (ndarray) array of input data
+    outputs   -- (ndarray) array of output data
+    n_subsets -- (int) number of subsets of data.  This attribute
+                 will only exist if the method split was called.
+    subsets   -- (list) list of data subsets (each subset will be
+                 an ndarray).  This attribute will only exist if
+                 the method split() was called.
+    """
 
     def __init__(self, data=None, ndim=None, name=None,
                  inputs=None, outputs=None, scaling=None):
@@ -816,15 +1066,19 @@ class MLPTrainingData(object):
             self.n_out = ndim[-1]
             self.data = np.asarray(data)
 
+            if len(self.data.shape) != 2:
+                raise ValueError("Training data must be a 2-dimensional "
+                               "array or nested sequence.")
+
             if self.data.shape[1] != (self.n_in + self.n_out):
-                raise MLPError(
+                raise ValueError(
                     "Data provided does not match the number "
                     "of inputs and outputs specified)."
                 )
 
-            if np.sum(np.isnan(data)) > 0:
-                raise MLPError(
-                    "'Not a number' (Nan) values found in training "
+            if np.isnan(self.data).sum(axis=None) > 0:
+                raise ValueError(
+                    "'Not a number' (NaN) values found in training "
                     "data set provided."
                 )
 
@@ -833,18 +1087,19 @@ class MLPTrainingData(object):
 
         else:
             # TODO: This code can be tidied up:
+            self.data = None
             self.inputs = np.asarray(inputs, dtype=np.float)
             self.outputs = np.asarray(outputs, dtype=np.float)
 
-            if np.sum(np.isnan(self.inputs)) > 0:
-                raise MLPError(
-                    "'Not a number' (Nan) values found in input "
+            if np.isnan(self.inputs).sum(axis=None) > 0:
+                raise ValueError(
+                    "'Not a number' (NaN) values found in input "
                     "data set provided."
                 )
 
-            if np.sum(np.isnan(self.outputs)) > 0:
-                raise MLPError(
-                    "'Not a number' (Nan) values found in output "
+            if np.isnan(self.outputs).sum(axis=None) > 0:
+                raise ValueError(
+                    "'Not a number' (NaN) values found in output "
                     "data set provided."
                 )
 
@@ -855,7 +1110,7 @@ class MLPTrainingData(object):
                 self.n_in = 1
                 self.inputs.shape = (s[0], 1)
             else:
-                raise MLPError(
+                raise ValueError(
                     "Array of input data must be 1 or 2-dimensional."
                     )
 
@@ -866,7 +1121,7 @@ class MLPTrainingData(object):
                 self.n_out = 1
                 self.outputs.shape = (s[0], 1)
             else:
-                raise MLPError(
+                raise ValueError(
                     "Array of output data must be 1 or 2-dimensional."
                     )
 
@@ -893,8 +1148,8 @@ class MLPTrainingData(object):
                  each sub-set."""
 
         if sum(ratios) != 1.0:
-            raise MLPError("When splitting training data into subsets,"
-                           " each the sum of the ratios must be 1.")
+            raise ValueError("When splitting training data into subsets,"
+                             " the sum of the ratios must be 1.")
 
         n = self.inputs.shape[0]
         n_in = self.inputs.shape[1]
@@ -914,7 +1169,7 @@ class MLPTrainingData(object):
         )
 
         # Sort in place, randomly
-        # np.random.shuffle(data)
+        np.random.shuffle(data)
 
         self.outputs = data[:, :n_out]
         self.inputs = data[:, n_out:]
@@ -1033,7 +1288,7 @@ def check_gradients(lambda_param=0.0):
 
     #act_funcs = [sigmoid, sigmoid]
     #grad_funcs = [sigmoid_gradient, sigmoid_gradient]
-    # TO-DO: For some reason when the gradients are checked
+    # TODO: For some reason when the gradients are checked
     # with other activation functions the error is much
     # greater.
     act_funcs = [arctan, arctan]
