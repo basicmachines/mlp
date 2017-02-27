@@ -214,12 +214,17 @@ class MLPLayer(object):
                    should be defined in this module.
 
     Attributes:
+    n_nodes     -- the number of nodes in the layer (excluding the
+                   bias term).
     input_layer -- The MLPLayer object that provides the inputs to
                    this layer.  Set to None by default and remains
                    None if this is an input layer.
     n_outputs   -- an integer equal to 1 + the number of outputs from
                    this layer (and equal to the length of the outputs
                    array).
+    act_func    -- The activation function to be used for calculating
+                   outputs for neurons in this layer.
+    grad_func   -- Derivative of the activation function to be used.
     outputs     -- one-dimensional numpy array containing the layer's
                    output values in outputs[1:].  These are set to
                    zero initially and outputs[0] is a fixed value
@@ -239,6 +244,8 @@ class MLPLayer(object):
 
     def __init__(self, n_nodes, input_layer=None,
                  act_func=default_act_func, grad_func=default_grad_func):
+
+        self.n_nodes = n_nodes
         self.n_outputs = n_nodes + 1
         self.outputs = np.zeros(self.n_outputs, dtype=np.float)
         self.outputs[0] = 1.0
@@ -353,30 +360,23 @@ class MLPNetwork(object):
         else:
 
             # Check the act_funcs argument is the correct type
-            # and size
+            # and size  TODO: Is this pythonic? Duck-typing?
             try:
-                assert isinstance(act_funcs, (list, tuple, np.ndarray))
-                assert not isinstance(act_funcs, str)
-                assert len(act_funcs) == self.n_layers - 1
+                self.act_funcs = [None] + list(act_funcs)
+                assert len(self.act_funcs) == self.n_layers
             except:
-                raise MLPError("act_funcs argument must be a single function "
-                               "or a list, tuple, or numpy.ndarray of correct "
-                               "size.")
-
-            self.act_funcs = [None] + list(act_funcs)
+                raise ValueError("act_funcs argument must be a single function "
+                               "or sequence of functions of correct size.")
 
             # Check the grad_funcs argument is the correct type
             # and size
             try:
-                assert isinstance(grad_funcs, (list, tuple, np.ndarray))
-                assert not isinstance(grad_funcs, str)
-                assert len(grad_funcs) == self.n_layers - 1
+                self.grad_funcs = [None] + list(grad_funcs)
+                assert len(self.grad_funcs) == self.n_layers
             except:
-                raise MLPError("grad_funcs argument must be a single function "
-                               "or a list, tuple, or numpy.ndarray of correct "
-                               "size.")
-
-            self.grad_funcs = [None] + list(grad_funcs)
+                raise ValueError("grad_funcs argument must be a single "
+                                 "function or sequence of functions of "
+                                 "correct size.")
 
         # Initialise layers
         self.layers = []
@@ -685,7 +685,7 @@ class MLPNetwork(object):
                         ),
                         axis=1
                     )
-            )*2/m  # TODO: Check. I added the '*2' during testing
+            )/m  # TODO: Check. I added the '*2' during testing
 
         return (J, grad)
         # %timeit returned 5.40 ms
@@ -790,6 +790,7 @@ class MLPNetwork(object):
         # Now initialise gradient arrays
         first = 0
         previous = self.layers[0]
+
         for j, layer in enumerate(self.layers[1:], start=1):
             last = first + previous.n_outputs*(layer.n_outputs - 1)
             if last > self.n_weights:
@@ -842,13 +843,14 @@ class MLPNetwork(object):
                     )
                 )
             )[:, 1:]
-            raise MLPError("Stop!:")
 
         # Calculate the deltas and gradients for each layer
         for j, layer in enumerate(self.layers[1:], start=1):
 
-            #TODO: Does this need changing for MSE?
-            delta[j] = np.dot(sigma[j].T, A[j - 1])
+            #TODO: Confirm - added '*layer.grad_func(Z[j])' to make
+            # this work for MSE.
+            #delta[j] = np.dot(sigma[j].T, A[j - 1])*layer.grad_func(Z[j])
+            delta[j] = (sigma[j]*layer.grad_func(Z[j])).T.dot(A[j - 1])
 
             theta_grad[j][:] = (
                 delta[j] + lambda_param * np.concatenate(
@@ -1133,7 +1135,7 @@ class MLPTrainingData(object):
                 # Normalise the training data
                 self.inputs[:] = (self.inputs - self.mu)*0.25/self.sigma
 
-    def split(self, ratios=(0.75, 0.25), names=('Training set', 'Validation set')):
+    def split(self, ratios=(0.75, 0.25), names=('Training set', 'Validation set'), shuffle=True):
         """Split training data points into a number of sub-sets
         (randomly). Useful for separating training data from
         validation and test data.
@@ -1169,7 +1171,8 @@ class MLPTrainingData(object):
         )
 
         # Sort in place, randomly
-        np.random.shuffle(data)
+        if shuffle:
+            np.random.shuffle(data)
 
         self.outputs = data[:, :n_out]
         self.inputs = data[:, n_out:]
@@ -1300,7 +1303,8 @@ def check_gradients(lambda_param=0.0):
         ndim,
         name="Test model",
         act_funcs=act_funcs,
-        grad_funcs=grad_funcs
+        grad_funcs=grad_funcs,
+        cost_function='mse'
         )
 
     # We generate some 'random' test data
