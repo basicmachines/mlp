@@ -13,10 +13,10 @@ This is a work-in-progress.  Still some bugs and fixes to do so don't recommend 
 
 ## Main Classes
 
-`MLPLayer` - Multi-layer perceptron neural network layer class (used by MLPNetwork)
-`MLPNetwork` - Multi-layer perceptron neural network class
-`MLPTrainingData`	- Object to store training data (inputs and outputs).
+- `MLPLayer` - Multi-layer perceptron neural network layer class (used by MLPNetwork)
+- `MLPNetwork` - Multi-layer perceptron neural network class
+- `MLPTrainingData`	- Object to store training data (inputs and outputs).
 
 ## Other Functions
 
-`train` - Used to handle training of a network.
+- `train` - Used to handle training of a network.
