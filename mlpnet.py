@@ -20,7 +20,19 @@
      - minimize - optimization algorithm used for learning.
     matplotlib.pyplot
      - for plotting surface plots etc.
-    """
+
+    TODO list:
+    - combine activation and gradient functions into one object
+    - consider detaching cost_functions (log, mse) from the
+      MLPNetwork class
+    - otpimize sigmoid derivative calculation (and tanh?) to
+      take advantage of fact that derivative is function of
+      the sigmoid
+    - find a way to connect the inputs of one network to the
+      outputs of another (ideally using a name-object reference
+      so no copying is required).
+
+"""
 
 from functools import partial
 
@@ -141,11 +153,12 @@ def linear_gradient(z):
     return 1.0
 
 
-# Set the defaul activation and gradient functions
+# Set the default activation and gradient functions
 # to use if user does not specify one
 
 default_act_func = sigmoid
 default_grad_func = sigmoid_gradient
+default_cost_function = 'log'
 
 # Some processor timings
 
@@ -276,15 +289,21 @@ class MLPNetwork(object):
             is also the number of inputs to the network.
 
     Keyword arguments:
-    name       -- (optional) a string to label the network.
-    act_funcs  -- a list of activation functions to use in each layer
-                  containing neurons (index 0, 1, ... corresponds to
-                  layers 1, 2, ...).  If not secified, the sigmoid
-                  function is used in all layers.
-    grad_funcs -- a list of the derivate functions of the activation
-                  functions to use in each layer (these must correspond
-                  to the functions listed in actfuncs).  If not secified, the
-                  derivative function of the sigmoid function is used.
+    name          -- (optional) a string to label the network.
+    act_funcs     -- a list of activation functions to use in each layer
+                     containing neurons (index 0, 1, ... corresponds to
+                     layers 1, 2, ...).  If not secified, the sigmoid
+                     function is used in all layers.
+    grad_funcs    -- a list of the derivate functions of the activation
+                     functions to use in each layer (these must correspond
+                     to the functions listed in actfuncs).  If not
+                     secified, the derivative function of the sigmoid
+                     function is used.
+    cost_function -- Specify the function to use as a cost function as
+                     a string.  Current options include 'log' for
+                     logistic or 'mse' for mean-squared error.  Note that
+                     you must choose the right cost function for the
+                     activation functions you choose for the output layer.
 
     Attributes:
     name       -- a string to label the network.
@@ -313,10 +332,14 @@ class MLPNetwork(object):
     Methods:
     cost_function      -- calculates the cost function for the network and
                           the Jacobian matrix given a set of training data.
+                          See the keyword argument 'cost_function' above.
     feed_forward       -- process the network in feed-forward mode. The
                           outputs array will be computed as a result.
     get_theta          -- returns the current weights of each layer as arrays.
     initialize_weights -- initialize the network weights with random numbers
+    set_inputs         -- this is a safe method to set the values of the input
+                          layer.  You can use 'MLPNetwork.inputs[:] =' but not
+                          'MLPNetwork.inputs ='.
     predict            -- makes predictions with the network given a set of
                           inputs.
     set_weights        -- updates the weights with a new set of weight values.
@@ -326,7 +349,7 @@ class MLPNetwork(object):
     """
 
     def __init__(self, ndim, name=None, act_funcs=None, grad_funcs=None,
-                 cost_function='mse'):
+                 cost_function=default_cost_function):
 
         self.name = name
         self.dimensions = ndim
@@ -359,8 +382,7 @@ class MLPNetwork(object):
             self.grad_funcs = [None] + [grad_funcs]*(self.n_layers - 1)
         else:
 
-            # Check the act_funcs argument is the correct type
-            # and size  TODO: Is this pythonic? Duck-typing?
+            # Catch type errors on arguments
             try:
                 self.act_funcs = [None] + list(act_funcs)
                 assert len(self.act_funcs) == self.n_layers
@@ -368,8 +390,6 @@ class MLPNetwork(object):
                 raise ValueError("act_funcs argument must be a single function "
                                "or sequence of functions of correct size.")
 
-            # Check the grad_funcs argument is the correct type
-            # and size
             try:
                 self.grad_funcs = [None] + list(grad_funcs)
                 assert len(self.grad_funcs) == self.n_layers
@@ -648,19 +668,13 @@ class MLPNetwork(object):
         # error)
         sigma[-1] = A[-1] - y
 
-        # TODO: The gradients are not being calculated correctly
-        # for sum-of-squares cost function.  Need to
-        # Figure out why.  I think it might be something about
-        # the following calculations which were from the
-        # logistic regression example from Andrew Ng.
-
         # Iterate over the hidden layers to back-propagate
         # the errors
         for j in range(self.n_layers - 2, 0, -1):
             sigma[j] = (
                 np.dot(sigma[j + 1], theta[j + 1]) *
                 # TODO: This could be speeded up using the
-                # dsigmoid function above instead
+                # dsigmoid function instead
                 self.layers[j + 1].grad_func(
                     np.concatenate(
                         (
@@ -685,7 +699,7 @@ class MLPNetwork(object):
                         ),
                         axis=1
                     )
-            )/m  # TODO: Check. I added the '*2' during testing
+            )/m
 
         return (J, grad)
         # %timeit returned 5.40 ms
@@ -815,24 +829,12 @@ class MLPNetwork(object):
         # error)
         sigma[-1] = A[-1] - y
 
-        # TODO: The gradients are not being calculated correctly
-        # for sum-of-squares cost function.  Need to do some
-        # reading on this.  The following calculations which are
-        # from the logistic regression example from Andrew Ng
-        # so obvious aren't correct.
-
-        # See:
-        """
-        http://www.philbrierley.com/main.html?code/bpproof.html&code/codeleft.html
-        """
-
         # Iterate over the hidden layers to back-propagate
         # the errors
         for j in range(self.n_layers - 2, 0, -1):
             sigma[j] = (
                 np.dot(sigma[j + 1], theta[j + 1]) *
-                # TODO: This could be speeded up using the
-                # dsigmoid function above instead
+
                 self.layers[j + 1].grad_func(
                     np.concatenate(
                         (
@@ -848,8 +850,8 @@ class MLPNetwork(object):
         for j, layer in enumerate(self.layers[1:], start=1):
 
             #TODO: Confirm - added '*layer.grad_func(Z[j])' to make
-            # this work for MSE.
-            #delta[j] = np.dot(sigma[j].T, A[j - 1])*layer.grad_func(Z[j])
+            # this work for MSE. Previously was:
+            # delta[j] = np.dot(sigma[j].T, A[j - 1])
             delta[j] = (sigma[j]*layer.grad_func(Z[j])).T.dot(A[j - 1])
 
             theta_grad[j][:] = (
@@ -1289,11 +1291,9 @@ def check_gradients(lambda_param=0.0):
     num_labels = 3
     m = 5
 
+    # Try different activation functions:
     #act_funcs = [sigmoid, sigmoid]
     #grad_funcs = [sigmoid_gradient, sigmoid_gradient]
-    # TODO: For some reason when the gradients are checked
-    # with other activation functions the error is much
-    # greater.
     act_funcs = [arctan, arctan]
     grad_funcs = [arctan_gradient, arctan_gradient]
 
@@ -1369,12 +1369,13 @@ def checkActFuncGradients(func_list):
     for f in func_list:
         act_func = f[0]
         grad_func = f[1]
-        print act_func
+        print "\n{}, {}:".format(act_func, grad_func)
         (xa, xn) = \
             grad_func(x_range), \
             compute_function_gradient(act_func, x_range)
+        print " x, grad_func, num. est."
         for i, x in enumerate(x_range):
-            print x, xa[i], xn[i]
+            print " {}, {}, {}".format(x, xa[i], xn[i])
 
 
 # THE FOLLOWING FUNCTION IS ONLY FOR TESTING!
@@ -1591,17 +1592,18 @@ def main():
 
     # Demo - XOR net
 
-    print "MLP Network to simulate XOR logic"
+    print "\n-------- Demonstration of MLP Network --------"
+    print "\nDemo: XOR logic"
 
     training_data = (
         (0.0, 0.0, 0.1),
         (0.0, 1.0, 0.9),
         (1.0, 0.0, 0.9),
-        (1.0, 1.0, 0.1),
-        (0.5, 0.0, 0.5),
-        (0.5, 1.0, 0.5),
-        (0.0, 0.5, 0.5),
-        (1.0, 0.5, 0.5)
+        (1.0, 1.0, 0.1)
+        #(0.5, 0.0, 0.5),
+        #(0.5, 1.0, 0.5),
+        #(0.0, 0.5, 0.5),
+        #(1.0, 0.5, 0.5)
     )
 
     ndim = (2, 2, 1)
@@ -1610,11 +1612,22 @@ def main():
         ndim,
         name="XOR",
         act_funcs=[sigmoid, sigmoid],
-        grad_funcs=[sigmoid_gradient, sigmoid_gradient]
+        grad_funcs=[sigmoid_gradient, sigmoid_gradient],
+        cost_function='log'
     )
+
+    # Use this to test tanh or arctan instead
+    #xor = MLPNetwork(
+    #    ndim,
+    #    name="XOR",
+    #    act_funcs=[tanh, tanh],
+    #    grad_funcs=[tanh_gradient, tanh_gradient],
+    #    cost_function='mse'
+    #)
 
     print xor, "created"
 
+    print "Randomly initialize weights..."
     xor.initialize_weights()
 
     training_set = MLPTrainingData(ndim=xor.dimensions, data=training_data)
@@ -1629,7 +1642,9 @@ def main():
 
     print "Initial error:", J
 
-    print '\nCheck activation function gradients... \n'
+    print "\nCheck gradient functions from activation functions..."
+
+    raw_input("Program paused. Press enter to continue.")
 
     # Check gradient functions by running checkActFuncGradients
     act_funcs = (
@@ -1657,7 +1672,7 @@ def main():
 
     xor.set_weights(res.x)
 
-    print "Network performance:"
+    print "Network performance [predictions, training data]:"
     print np.array_str(
         np.concatenate(
             (
@@ -1695,6 +1710,9 @@ def main():
         ax.set_ylabel('x[1]')
         ax.set_zlabel('output')
         plt.show()
+
+    print "Generating plot in separate window."
+    print "Close plot window when done.."
 
     show_plot()
 
