@@ -2,7 +2,7 @@
 """Neural network simulator
 
     @author: Bill Tubbs
-    Date: 24/2/2017
+    Date: 31/12/2017
 
     This module provides classes to simulate Multi-Layer
     Perceptron (MLP) neural networks for machine learning
@@ -23,12 +23,16 @@
      - for plotting surface plots etc.
 
     TODO list:
+    - Confirm if gradients are being calculated correctly
+      for activation functions other than sigmoid
     - combine activation and gradient functions into one object
     - consider detaching cost_functions (log, mse) from the
       MLPNetwork class
     - otpimize sigmoid derivative calculation (and tanh?) to
       take advantage of fact that derivative is function of
       the sigmoid
+    - Try instantiating the A[]'s with the 1.0 values in place
+      and then set the remaining values using an assignment
     - find a way to connect the inputs of one network to the
       outputs of another (ideally using a name-object reference
       so no copying is required).
@@ -57,12 +61,12 @@ class MLPError(Exception):
 # ---------------- ACTIVATION FUNCTION DEFINITIONS ---------------------
 
 # Each function needs a gradient (derivative) function as well as
-# the actual actuation function
+# the actuation function itself
 
 # 1. Sigmoid activation function and gradient
 
 # expit is a fast vectorized version of the Sigmoid function, also
-# known as the logistic function, and is imported from the SciPy
+# known as the logistic function.  It is imported from the SciPy
 # module.
 sigmoid = expit
 
@@ -120,14 +124,14 @@ def arctan_gradient(z):
     return 1.0/(z*z + 1.0)
 
 
-# 3. TanH activation function and gradient
+# 3. Hyperbolic tangent (tanh) activation function and gradient
 tanh = np.tanh
 
 def tanh_gradient(z):
     """tanh_gradient(z) returns the derivative of the tanh
     activation function evaluated at z."""
 
-    return 1.0 - np.tanh(z)**2
+    return 1.0 - tanh(z)**2
 
 
 def d_tanh(y):
@@ -154,11 +158,38 @@ def linear_gradient(z):
     return 1.0
 
 
-# Set the default activation and gradient functions
-# to use if user does not specify one
+# 5. Rectified Linear Unit (ReLU) activation function
 
-default_act_func = sigmoid
-default_grad_func = sigmoid_gradient
+def relu(z):
+    """relu(z) is the activation function known as ReLU
+    (rectified linear unit).
+    """
+    return z*(z > 0)
+    # return np.maximum(0, z)  # Alternative - slightly slower
+
+
+def relu_gradient(z):
+    """relu_gradient(z) returns the gradient of the ReLU
+    (Rectified Linear Unit) activation function.
+    """
+
+    return (z > 0).astype(float)
+
+# This dictionary is used to reference activation functions
+# and their derivatives by name
+
+activation_functions = {
+    "sigmoid": (sigmoid, sigmoid_gradient),
+    "arctan": (arctan, arctan_gradient),
+    "tanh": (tanh, tanh_gradient),
+    "linear": (linear, linear_gradient),
+    "relu": (relu, relu_gradient)
+}
+
+# Set the default activation function to use if user does
+# not specify one.
+
+default_act_func = activation_functions["sigmoid"]
 default_cost_function = 'log'
 
 # Some processor timings
@@ -219,13 +250,11 @@ class MLPLayer(object):
                    the inputs to this layer.  If this layer is the
                    network's input layer then input_layer should be
                    set to None.
-    act_func    -- The activation function to be used for calculating
-                   outputs for neurons in this layer.  If not
-                   specified, actFunc=default_act_func which should be
-                   defined in this module.
-    grad_func   -- Derivative of the activation function to be used.
-                   If not specified, grad_func=default_grad_func which
-                   should be defined in this module.
+    act_func    -- A tuple containing the activation function and
+                   its derivative (gradient) function to be used for
+                   all neurons in this layer.  If not specified,
+                   act_func=default_act_func which should be defined
+                   in this module.
 
     Attributes:
     n_nodes     -- the number of nodes in the layer (excluding the
@@ -236,9 +265,9 @@ class MLPLayer(object):
     n_outputs   -- an integer equal to 1 + the number of outputs from
                    this layer (and equal to the length of the outputs
                    array).
-    act_func    -- The activation function to be used for calculating
-                   outputs for neurons in this layer.
-    grad_func   -- Derivative of the activation function to be used.
+    act_func    -- A tuple containing the activation function and its
+                   derivative (gradient) function used for all
+                   neurons in this layer.
     outputs     -- one-dimensional numpy array containing the layer's
                    output values in outputs[1:].  These are set to
                    zero initially and outputs[0] is a fixed value
@@ -257,7 +286,7 @@ class MLPLayer(object):
     """
 
     def __init__(self, n_nodes, input_layer=None,
-                 act_func=default_act_func, grad_func=default_grad_func):
+                 act_func=default_act_func):
 
         self.n_nodes = n_nodes
         self.n_outputs = n_nodes + 1
@@ -265,14 +294,13 @@ class MLPLayer(object):
         self.outputs[0] = 1.0
         self.input_layer = input_layer
         self.act_func = act_func
-        self.grad_func = grad_func
         self.weights = None
 
     def calculate_outputs(self):
         """Calculate the outputs of each neuron in the layer."""
 
         if self.input_layer:
-            self.outputs[1:] = self.act_func(
+            self.outputs[1:] = self.act_func[0](
                 np.dot(self.weights, self.input_layer.outputs)
                 )
         else:
@@ -291,15 +319,18 @@ class MLPNetwork(object):
 
     Keyword arguments:
     name          -- (optional) a string to label the network.
-    act_funcs     -- a list of activation functions to use in each layer
-                     containing neurons (index 0, 1, ... corresponds to
-                     layers 1, 2, ...).  If not secified, the sigmoid
-                     function is used in all layers.
-    grad_funcs    -- a list of the derivate functions of the activation
-                     functions to use in each layer (these must correspond
-                     to the functions listed in actfuncs).  If not
-                     secified, the derivative function of the sigmoid
-                     function is used.
+    act_funcs     -- Either: (a) a list of tuples containing the
+                     activation functions and derivative functions to
+                     use for the neurons in each layer (excluding the
+                     input layer), or (b) one tuple containing the
+                     activation function and its derivative function to
+                     be used for all layers. In the case of (a) above,
+                     the names (strings) of activation functions
+                     contained in the dictionary act_funcs may be used
+                     instead of tuples. If act_funcs is not specified,
+                     the default activation function defined in the
+                     variable default_act_func will be used for all
+                     layers.
     cost_function -- Specify the function to use as a cost function as
                      a string.  Current options include 'log' for
                      logistic or 'mse' for mean-squared error.  Note that
@@ -347,9 +378,11 @@ class MLPNetwork(object):
     check_gradients    -- runs a test to compare the calculated gradients with
                           numerical estimates to make sure they are being
                           calculated correctly.
+    get_act_funcs      -- Return a list of the activation functions from each
+                          layer.
     """
 
-    def __init__(self, ndim, name=None, act_funcs=None, grad_funcs=None,
+    def __init__(self, ndim, name=None, act_funcs=None,
                  cost_function=default_cost_function):
 
         self.name = name
@@ -367,53 +400,43 @@ class MLPNetwork(object):
             raise MLPError("Cost function choice '%s' not recognised" \
                             % cost_function)
 
-        # If act_funcs or grad_funcs keywords are not
-        # provided, use the sigmoid function
+        # If act_funcs or grad_funcs keywords are not provided,
+        # use the sigmoid function
+
         if act_funcs is None:
             act_funcs = default_act_func
-        if grad_funcs is None:
-            grad_funcs = default_grad_func
 
-        # If a single function is provided, use it for
-        # all layers.  If not, assume a list was provided.
+        # If a single function is provided, use it for all layers.
+        # If not, assume a list was provided.
         # Note, add None as the first item and this will
         # end up assigned to the input layer.
-        if callable(act_funcs):
-            self.act_funcs = [None] + [act_funcs]*(self.n_layers - 1)
-            self.grad_funcs = [None] + [grad_funcs]*(self.n_layers - 1)
+
+        # Use the dictionary of activation functions to lookup by
+        # name (strings)
+        if act_funcs in activation_functions:
+            act_funcs = activation_functions[act_funcs]
+
+        if callable(act_funcs[0]) and callable(act_funcs[1]):
+            act_funcs = [None] + [act_funcs]*(self.n_layers - 1)
         else:
-
-            # Catch type errors on arguments
-            try:
-                self.act_funcs = [None] + list(act_funcs)
-                assert len(self.act_funcs) == self.n_layers
-            except:
-                raise ValueError("act_funcs argument must be a single function "
-                               "or sequence of functions of correct size.")
-
-            try:
-                self.grad_funcs = [None] + list(grad_funcs)
-                assert len(self.grad_funcs) == self.n_layers
-            except:
-                raise ValueError("grad_funcs argument must be a single "
-                                 "function or sequence of functions of "
-                                 "correct size.")
+            assert len(act_funcs) == self.n_layers - 1
+            act_funcs = [None] + [activation_functions.get(item,item)
+                                  for item in act_funcs]
 
         # Initialise layers
         self.layers = []
         self.n_weights = 0
         previous = None
-        for (d, act_func, grad_func) in \
-                zip(ndim, self.act_funcs, self.grad_funcs):
+        for (d, act_func) in zip(ndim, act_funcs):
             new_layer = MLPLayer(
                 d,
                 input_layer=previous,
-                act_func=act_func,
-                grad_func=grad_func
+                act_func=act_func
             )
             self.layers.append(new_layer)
             if previous:
-                self.n_weights += (new_layer.n_outputs - 1)*previous.n_outputs
+                self.n_weights += (new_layer.n_outputs - 1)* \
+                                     previous.n_outputs
             previous = new_layer
 
         # Now initialise weights
@@ -597,12 +620,12 @@ class MLPNetwork(object):
             # A[]'s with the 1.0 values in place and then
             # set the remaining values using an assignment?
             if j == self.n_layers - 1:
-                A[j] = layer.act_func(Z[j])
+                A[j] = layer.act_func[0](Z[j])
             else:
                 A[j] = np.concatenate(
                     (
                         np.ones((m, 1), dtype=np.float),
-                        layer.act_func(Z[j])
+                        layer.act_func[0](Z[j])
                     ),
                     axis=1
                 )
@@ -676,7 +699,7 @@ class MLPNetwork(object):
                 np.dot(sigma[j + 1], theta[j + 1]) *
                 # TODO: This could be speeded up using the
                 # dsigmoid function instead
-                self.layers[j + 1].grad_func(
+                self.layers[j + 1].act_func[1](
                     np.concatenate(
                         (
                             np.ones((m, 1), dtype=np.float),
@@ -762,12 +785,12 @@ class MLPNetwork(object):
             # set the remaining values using an assignment?
             # (A speed test I did suggests it would)
             if j == self.n_layers - 1:
-                A[j] = layer.act_func(Z[j])
+                A[j] = layer.act_func[0](Z[j])
             else:
                 A[j] = np.concatenate(
                     (
                         np.ones((m, 1), dtype=np.float),
-                        layer.act_func(Z[j])
+                        layer.act_func[0](Z[j])
                     ),
                     axis=1
                 )
@@ -836,7 +859,7 @@ class MLPNetwork(object):
             sigma[j] = (
                 np.dot(sigma[j + 1], theta[j + 1]) *
 
-                self.layers[j + 1].grad_func(
+                self.layers[j + 1].act_func[1](
                     np.concatenate(
                         (
                             np.ones((m, 1), dtype=np.float),
@@ -850,10 +873,10 @@ class MLPNetwork(object):
         # Calculate the deltas and gradients for each layer
         for j, layer in enumerate(self.layers[1:], start=1):
 
-            #TODO: Confirm - added '*layer.grad_func(Z[j])' to make
+            #TODO: Confirm - added '*layer.act_func[1](Z[j])' to make
             # this work for MSE. Previously was:
             # delta[j] = np.dot(sigma[j].T, A[j - 1])
-            delta[j] = (sigma[j]*layer.grad_func(Z[j])).T.dot(A[j - 1])
+            delta[j] = (sigma[j]*layer.act_func[1](Z[j])).T.dot(A[j - 1])
 
             theta_grad[j][:] = (
                 delta[j] + lambda_param * np.concatenate(
@@ -895,7 +918,7 @@ class MLPNetwork(object):
         # to represent the bias terms
         for j, layer in enumerate(self.layers[1:], start=1):
 
-            outputs = layer.act_func(
+            outputs = layer.act_func[0](
                 np.dot(
                     np.concatenate(
                         (np.ones((m, 1), dtype=np.float), outputs),
@@ -913,6 +936,12 @@ class MLPNetwork(object):
             weights -- one-dimensional array of weight values."""
         self.weights[:] = weights
 
+    def get_act_funcs(self):
+        """Return a list of the activation functions from each
+        layer (excluding the input layer)."""
+
+        return [layer.act_func for layer in self.layers[1:]]
+
     def __repr__(self):
 
         # Compose a string representation of the object
@@ -920,18 +949,13 @@ class MLPNetwork(object):
 
         s.append("ndim=%s" % self.dimensions.__repr__())
 
+        act_funcs = self.get_act_funcs()
         if self.n_neurons > 0:
-            if all(map(lambda x: x is self.act_funcs[1], self.act_funcs[1:])):
-                if self.act_funcs[1] is not default_act_func:
-                    s.append("act_funcs=%s" % self.act_funcs[1].__repr__())
+            if all([x is act_funcs[0] for x in act_funcs]):
+                if act_funcs[0] is not default_act_func:
+                    s.append("act_funcs=%s" % act_funcs[0].__repr__())
             else:
-                s.append("act_funcs=%s" % self.act_funcs.__repr__())
-
-            if all(map(lambda x: x is self.grad_funcs[1], self.grad_funcs[1:])):
-                if self.grad_funcs[1] is not default_grad_func:
-                    s.append("grad_funcs=%s" % self.grad_funcs[1].__repr__())
-            else:
-                s.append("grad_funcs=%s" % self.grad_funcs.__repr__())
+                s.append("act_funcs=%s" % act_funcs.__repr__())
 
         try:
             if self.name is not None:
@@ -966,8 +990,8 @@ class MLPNetwork(object):
 
         print '\nChecking backpropagation and gradient calculations...\n'
 
-        # If the weights were not provided as an argument, use
-        # the current network weights.
+        # If no weights were provided as an argument, use the network's
+        # current weights.
         if weights is None:
             weights = self.weights
 
@@ -988,7 +1012,7 @@ class MLPNetwork(object):
         #    lambda_param=lambda_param
         #)
 
-        # alternatively could use a lambda function or a partial function
+        # alternatively could use a lambda function
         # cost_func = lambda p: test_model.cost_function(p, input_layer_size,
         #                  hidden_layer_size, num_labels, X, y, lambda_param)
 
@@ -1011,7 +1035,7 @@ class MLPNetwork(object):
         diff = np.linalg.norm((numgrad - cost[1]), ord=2) / \
             np.linalg.norm((numgrad + cost[1]), ord=2)
 
-        print 'If your backpropagation implementation is correct, then \n' + \
+        print 'If the backpropagation implementation is correct, then \n' + \
               'the relative difference will be small (less than 1e-9). \n' + \
               '\nRelative Difference: %g\n' % diff
 
@@ -1321,10 +1345,8 @@ def check_gradients(lambda_param=0.0):
     m = 5
 
     # Try different activation functions:
-    #act_funcs = [sigmoid, sigmoid]
-    #grad_funcs = [sigmoid_gradient, sigmoid_gradient]
-    act_funcs = [arctan, arctan]
-    grad_funcs = [arctan_gradient, arctan_gradient]
+    act_funcs = [(sigmoid, sigmoid_gradient), (sigmoid, sigmoid_gradient)]
+    #act_funcs = [(arctan, arctan_gradient), (arctan, arctan_gradient)]
 
     # Initialise the MLP test network for the system model
     ndim = [input_layer_size, hidden_layer_size, num_labels]
@@ -1332,7 +1354,6 @@ def check_gradients(lambda_param=0.0):
         ndim,
         name="Test model",
         act_funcs=act_funcs,
-        grad_funcs=grad_funcs,
         cost_function='mse'
         )
 
@@ -1391,7 +1412,9 @@ def check_gradients(lambda_param=0.0):
 
 def checkActFuncGradients(func_list):
     """Function to check activation gradient functions are
-    correct"""
+    correct. func_list should be a list of tuples.  Each
+    tuple should contain an activation function [item 0]
+    and its derivative [item 1]."""
 
     x_range = np.arange(-1.5, 1.5, 0.5)
 
@@ -1468,7 +1491,7 @@ def compute_function_gradient(f, x):
 
 
 def test_code():
-    """EXAMPLE IMPLEMENTATION TO TEST THE CODE/"""
+    """EXAMPLE IMPLEMENTATION TO TEST THE CODE"""
     # Setup the parameters you will use for this exercise
     # The network takes 400 input values which reprsent
     # the pixels on 20x20 input images of digits
@@ -1478,6 +1501,13 @@ def test_code():
     print "------------ MLP Neural Network Simulator ------------"
     print "Running test exercise to check code...\n"
     my_network = MLPNetwork(ndim=[400, 25, 10], name="ImageRecognition")
+
+    # Optionally use non-default activation functions.  E.g.:
+    #act_funcs = [None, (relu, relu_gradient), (sigmoid, sigmoid_gradient)]
+    #my_network.set_act_funcs(act_funcs)
+
+    print "NN initialized:"
+    print my_network
 
     # Load Training Data
     filename = "ex4data1.bin"
@@ -1524,8 +1554,8 @@ def test_code():
     )
 
     # Alternatively, randomly initialize weights
-    # my_network.initialize_weights()
-    # initial_weights = my_network.weights
+    #my_network.initialize_weights()
+    #initial_weights = my_network.weights
 
     print "Total number of weights:", initial_weights.shape[0], "\n"
 
@@ -1640,8 +1670,7 @@ def main():
     xor = MLPNetwork(
         ndim,
         name="XOR",
-        act_funcs=[sigmoid, sigmoid],
-        grad_funcs=[sigmoid_gradient, sigmoid_gradient],
+        act_funcs=[(sigmoid, sigmoid_gradient), (sigmoid, sigmoid_gradient)],
         cost_function='log'
     )
 
@@ -1649,8 +1678,7 @@ def main():
     #xor = MLPNetwork(
     #    ndim,
     #    name="XOR",
-    #    act_funcs=[tanh, tanh],
-    #    grad_funcs=[tanh_gradient, tanh_gradient],
+    #    act_funcs=[(tanh, tanh_gradient), (tanh, tanh_gradient)],
     #    cost_function='mse'
     #)
 
