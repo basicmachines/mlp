@@ -9,6 +9,7 @@
     applications.
 
     Based on theory taught by Andrew Ng on coursera.org
+    and the Octave code examples from this course.
 
     Python modules required to run this module:
 
@@ -1156,7 +1157,6 @@ class MLPTrainingData(object):
                              " the sum of the ratios must be 1.")
 
         n = self.inputs.shape[0]
-        n_in = self.inputs.shape[1]
         n_out = self.outputs.shape[1]
 
         self.n_subsets = len(ratios)
@@ -1210,11 +1210,39 @@ class MLPTrainingData(object):
         return "MLPTrainingData(" + ", ".join(s) + ")"
 
 
-def train(net, data, max_iter=1, update=True, disp=False,
+def train(net, data, max_iter=1, update=True, disp=False, method='L-BFGS-B',
           lambda_param=0.0, gtol=1e-6, ftol=0.01):
-    """train(net, data, max_iter=1, update=True, disp=False,
-          lambda_param=0.0, gtol=1e-6, ftol=0.01)
-           -> OptimizeResult"""
+    """Trains the network (net) on a set of training data (data)
+    using the scipy.optimize.minimize function which will minimize
+    the network's cost function (net.cost_function) by changing
+    the weights (net.weights).
+
+    Returns a scipy.optimize.OptimizeResult object.  See the
+    scipy documentation for a description of its attributes.
+
+    Arguments:
+    net          -- MLPNetwork object.
+    data         -- MLPTrainingData object.
+
+    Keyword Arguments:
+    max_iter     -- Maximum number of iterations of the solver
+    update       -- Set to False if you don't want to update the
+                    network's weights at the end of the training.
+                    Default is True.
+    disp         -- Set to True if you want the minimize function
+                    to print convergence progress messages during
+                    the training.
+    method       -- Select the solver to use.  It must be a solver
+                    that uses a Jacobian matrix (of gradients).
+                    Default is 'L-BFGS-B'.
+    lambda_param -- Regularization parameter.  Default is 0.0.
+    gtol         -- This is a parameter specific to the 'L-BFGS-B'
+                    solver.  The iteration will stop when the
+                    maximum gradient is <= gtol.  Default is 1e-6.
+    ftol         -- This is a parameter specific to the 'L-BFGS-B'
+                    solver.  The iteration will stop when the cost
+                    function is <= to ftol.  Default is 0.01.
+    """
 
     cost_func = partial(
         net.cost_function,
@@ -1227,7 +1255,7 @@ def train(net, data, max_iter=1, update=True, disp=False,
     res = minimize(
         cost_func,
         net.weights,
-        method='L-BFGS-B',
+        method=method,
         jac=True,
         options={
             'gtol': gtol,
@@ -1239,10 +1267,11 @@ def train(net, data, max_iter=1, update=True, disp=False,
     # Other options:
     # - CG, BFGS, Newton-CG, L-BFGS-B, TNC, SLSQP, dogleg, trust-ncg
 
-    if update is True:
+    if update:
         net.weights[:] = res.x
 
     print "Solver returned the following message:\n" + res.message
+
     return res
 
 # THE FOLLOWING FUNCTION IS ONLY FOR TESTING!
