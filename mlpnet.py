@@ -155,7 +155,7 @@ def linear_gradient(z):
     """linear_gradient(z) returns the derivative of the
     linear activation which is 1.0."""
 
-    return 1.0
+    return np.ones(z.shape)
 
 
 # 5. Rectified Linear Unit (ReLU) activation function
@@ -333,8 +333,9 @@ class MLPNetwork(object):
     cost_function -- Specify the function to use as a cost function as
                      a string.  Current options include 'log' for
                      logistic or 'mse' for mean-squared error.  Note that
-                     you must choose the right cost function for the
-                     activation functions you choose for the output layer.
+                     you must choose a cost function appropriate to the
+                     problem you are solving.  For the logistic cost
+                     function, all desired outputs must be 0 or 1.
 
     Attributes:
     name       -- a string to label the network.
@@ -1496,6 +1497,8 @@ def main():
     """Main function - this will run an example implementation to
     test the module is working."""
 
+    import matplotlib.pyplot as plt
+
     # THE FOLLOWING EXAMPLE IMPLEMENTATION IS FOR TESTING THE CODE!"""
     # To run the above test code execute uncomment the following
     # line of code:
@@ -1509,10 +1512,10 @@ def main():
     print "\nDemo: XOR logic"
 
     training_data = (
-        (0.0, 0.0, 0.1),
-        (0.0, 1.0, 0.9),
-        (1.0, 0.0, 0.9),
-        (1.0, 1.0, 0.1)
+        (0.0, 0.0, 0.0),
+        (0.0, 1.0, 1.0),
+        (1.0, 0.0, 1.0),
+        (1.0, 1.0, 0.0)
         #(0.5, 0.0, 0.5),
         #(0.5, 1.0, 0.5),
         #(0.0, 0.5, 0.5),
@@ -1553,17 +1556,12 @@ def main():
 
     print "Initial error:", J
 
-    print "\nCheck gradient functions from activation functions..."
+    print "\nCheck gradient functions of activation functions..."
 
     raw_input("Program paused. Press enter to continue.")
 
     # Check gradient functions by running checkActFuncGradients
-    act_funcs = (
-        (sigmoid, sigmoid_gradient),
-        (arctan, arctan_gradient),
-        (tanh, tanh_gradient)
-    )
-    checkActFuncGradients(act_funcs)
+    checkActFuncGradients(activation_functions.values())
 
     raw_input("Program paused. Press enter to continue.")
 
