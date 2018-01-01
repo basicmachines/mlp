@@ -36,15 +36,15 @@
     - find a way to connect the inputs of one network to the
       outputs of another (ideally using a name-object reference
       so no copying is required).
+    - Consider whether to move train to a method of network (or
+      not).
 
 """
 
 from functools import partial
-
 import numpy as np
 from scipy.special import expit
 from scipy.optimize import minimize
-import matplotlib.pyplot as plt
 
 
 # ------------------------ EXCEPTION CLASS -----------------------------
@@ -324,13 +324,12 @@ class MLPNetwork(object):
                      use for the neurons in each layer (excluding the
                      input layer), or (b) one tuple containing the
                      activation function and its derivative function to
-                     be used for all layers. In the case of (a) above,
-                     the names (strings) of activation functions
-                     contained in the dictionary act_funcs may be used
-                     instead of tuples. If act_funcs is not specified,
-                     the default activation function defined in the
-                     variable default_act_func will be used for all
-                     layers.
+                     be used for all layers. In either case, names of
+                     activation functions contained in the dictionary
+                     act_funcs may be used (as strings) instead of
+                     tuples. If act_funcs is not specified, the default
+                     activation function defined in the variable
+                     default_act_func will be used for all layers.
     cost_function -- Specify the function to use as a cost function as
                      a string.  Current options include 'log' for
                      logistic or 'mse' for mean-squared error.  Note that
@@ -413,9 +412,9 @@ class MLPNetwork(object):
 
         # Use the dictionary of activation functions to lookup by
         # name (strings)
-        if act_funcs in activation_functions:
-            act_funcs = activation_functions[act_funcs]
-
+        if isinstance(act_funcs, basestring):
+            if act_funcs in activation_functions:
+                act_funcs = activation_functions[act_funcs]
         if callable(act_funcs[0]) and callable(act_funcs[1]):
             act_funcs = [None] + [act_funcs]*(self.n_layers - 1)
         else:
@@ -1298,6 +1297,7 @@ def train(net, data, max_iter=1, update=True, disp=False, method='L-BFGS-B',
 
     return res
 
+
 # THE FOLLOWING FUNCTION IS ONLY FOR TESTING!
 
 def initialize_weights(fan_out, fan_in):
@@ -1328,7 +1328,6 @@ def initialize_weights(fan_out, fan_in):
 
 
 # THE FOLLOWING FUNCTION IS ONLY FOR TESTING!
-
 
 def check_gradients(lambda_param=0.0):
     """check_gradients Creates a small neural network to check the
@@ -1488,151 +1487,6 @@ def compute_function_gradient(f, x):
 
     e = 1.0e-4
     return (f(x + e) - f(x - e))/(2.0*e)
-
-
-def test_code():
-    """EXAMPLE IMPLEMENTATION TO TEST THE CODE"""
-    # Setup the parameters you will use for this exercise
-    # The network takes 400 input values which reprsent
-    # the pixels on 20x20 input images of digits
-    # the network has 10 outputs, one for each digit recognized
-    # (0, 1, 2, .... 10)
-
-    print "------------ MLP Neural Network Simulator ------------"
-    print "Running test exercise to check code...\n"
-    my_network = MLPNetwork(ndim=[400, 25, 10], name="ImageRecognition")
-
-    # Optionally use non-default activation functions.  E.g.:
-    #act_funcs = [None, (relu, relu_gradient), (sigmoid, sigmoid_gradient)]
-    #my_network.set_act_funcs(act_funcs)
-
-    print "NN initialized:"
-    print my_network
-
-    # Load Training Data
-    filename = "ex4data1.bin"
-    f = file(filename, "rb")
-    X = np.load(f)
-    y_labels = np.load(f)
-    f.close()
-
-    # Number of training data points
-    m = len(X)
-
-    print "%d training data points loaded from file '%s'\n" \
-          % (m, filename)
-
-    #  Convert y values to binary network outputs (0.0 or 1.0)
-    #  (note that in the data file, "0" is mapped to label 10)
-    n_labels = my_network.n_outputs
-
-    y = np.zeros((m, n_labels), dtype=np.float)
-
-    for i in range(m):
-        y[i][int(y_labels[i]) - 1] = 1.0
-
-    # This is not working but would be nice to vectorise
-    # above code:
-    # for i in range(n_labels):
-    #     y[:,i] = np.array((y_labels % 10 == i))
-
-    # Load the weights into variables theta1 and theta2
-    filename = "ex4weights.bin"
-    f = file(filename, "rb")
-    theta1 = np.load(f)
-    theta2 = np.load(f)
-    f.close()
-
-    print "Network parameters loaded from file '%s'" % filename
-
-    # Roll-up weights into one (1 dimensional) vector
-    # Note: for my implementation of MLPNetwork, initial theta values are
-    # not transposed before concatenating them and saving to the network!
-    initial_weights = np.concatenate(
-        (theta1.ravel(), theta2.ravel()),
-        axis=0
-    )
-
-    # Alternatively, randomly initialize weights
-    #my_network.initialize_weights()
-    #initial_weights = my_network.weights
-
-    print "Total number of weights:", initial_weights.shape[0], "\n"
-
-    raw_input("Program paused. Press enter to continue.")
-
-    print 'Test feedforward calculation using Neural Network ...\n'
-
-    # lambda_param is the weight regularization parameter (set to 0
-    # here). Note: 'lambda' is not a valid variable name in Python.
-
-    # One option is to assign the weights to the network prior
-    # to calling the cost_function:
-    # my_network.weights[:] = initial_weights
-    # J = my_network.cost_function(X, y, lambda_param=0.0)
-
-    # Another way is to use the weights argument when calling the
-    # cost function
-    J = my_network.cost_function(
-        X, y,
-        weights=initial_weights,
-        lambda_param=0.0
-    )
-
-    print ('Cost at parameters loaded from %s: %f ' +
-           '\n(this value should be about 0.287629)\n') \
-        % (filename, J[0])
-
-    raw_input("Program paused. Press enter to continue.")
-
-    print '\nStarting training... \n'
-
-    # Set amount of training iterations
-    max_iter = 120
-
-    #  Try different values of lambda
-    lambda_param = 0.8
-
-    cost_func = partial(
-        my_network.cost_function,
-        X, y,
-        lambda_param=lambda_param
-    )
-
-    def report_convergence(p):
-        """Prints message showing the current value of the cost function
-        given the set of parameters p."""
-        print "Iteration completed. Error: %f" % cost_func(p)[0]
-
-    res = minimize(
-        cost_func,
-        initial_weights,
-        method='L-BFGS-B',
-        jac=True,
-        options={'gtol': 4e-4, 'disp': True, 'maxiter': max_iter},
-        # Other options: 'disp': True
-        # tol=0.05,
-        # callback = report_convergence
-    )
-
-    print 'Optimization result = ', res.x
-
-    new_weights = res.x
-
-    # Note the slice assignment is important so that
-    # values are inserted into existing array memory
-    my_network.weights[:] = new_weights
-
-    pred = my_network.predict(X)
-
-    # Convert network outputs to label predictions
-    p_labels = np.argmax(pred, axis=1) + 1
-
-    print '\nTraining Set Accuracy: %5.1f percent\n' \
-          % (np.mean(p_labels == y_labels)*100)
-    print 'This should be about 99.4 percent.'
-
-    raw_input("Program paused. Press enter to continue.")
 
 
 # --------------------- START OF MAIN FUNCTION ---------------------
