@@ -48,6 +48,7 @@ from functools import partial
 import numpy as np
 from scipy.special import expit
 from scipy.optimize import minimize
+from builtins import input
 
 
 # ------------------------ EXCEPTION CLASS -----------------------------
@@ -416,7 +417,7 @@ class MLPNetwork(object):
 
         # Use the dictionary of activation functions to lookup by
         # name (strings)
-        if isinstance(act_funcs, basestring):
+        if isinstance(act_funcs, str):
             if act_funcs in activation_functions:
                 act_funcs = activation_functions[act_funcs]
         if callable(act_funcs[0]) and callable(act_funcs[1]):
@@ -997,7 +998,7 @@ class MLPNetwork(object):
             them."""
 
         if messages:
-            print '\nChecking backpropagation and gradient calculations...\n'
+            print('\nChecking backpropagation and gradient calculations...\n')
 
         # If no weights were provided as an argument, use the network's
         # current weights.
@@ -1033,10 +1034,10 @@ class MLPNetwork(object):
         # columns you get should be very similar.
         for (c1, c2) in zip(numgrad, cost[1]):
             if messages:
-                print c1, c2
+                print(c1, c2)
         if messages:
-            print 'The above two columns you get should be very similar.\n' + \
-              '(Left-Numerical Gradient, Right-Analytical Gradient)\n\n'
+            print('The above two columns you get should be very similar.\n' +
+              '(Left-Numerical Gradient, Right-Analytical Gradient)\n\n')
 
         if (numgrad - cost[1]).sum() == 0.0:
             diff = 0
@@ -1049,10 +1050,10 @@ class MLPNetwork(object):
                 np.linalg.norm((numgrad + cost[1]), ord=2)
 
         if messages:
-            print "If the backpropagation implementation is correct\n" + \
-                  "then the relative difference will be small (less\n" + \
-                  "than 1e-9).\n"
-            print "Relative Difference: %g\n" % diff
+            print("If the backpropagation implementation is correct\n" +
+                  "then the relative difference will be small (less\n" +
+                  "than 1e-9).\n")
+            print("Relative Difference: %g\n" % diff)
 
         return diff
 
@@ -1311,7 +1312,7 @@ def train(net, data, max_iter=1, update=True, disp=False, method='L-BFGS-B',
     if update:
         net.weights[:] = res.x
 
-    print "Solver returned the following message:\n" + res.message
+    print("Solver returned the following message:", str(res.message))
 
     return res
 
@@ -1385,12 +1386,12 @@ def xor_test(n=10, max_iter=100):
 
     training_data = MLPTrainingData(data, ndim=[2, 1])
 
-    print "\n ----------- xor_test ----------- \n"
+    print("\n -------------- xor_test -------------- \n")
 
-    print "Test gradient calculations using networks with randomly-"
-    print "chosen dimensions and activation functions\n"
+    print("Test gradient calculations using networks with randomly-")
+    print("chosen dimensions and activation functions\n")
 
-    print "Prints ndim, activation funcs, gradient error:"
+    print("Prints ndim, activation funcs, gradient error:")
 
     max_iter_choices = (int(max_iter/2), max_iter, max_iter*2)
     train_record = []
@@ -1409,7 +1410,7 @@ def xor_test(n=10, max_iter=100):
             act_func_names.append(name)
             act_funcs.append(activation_functions[name])
         set_act_funcs(xor, act_funcs)
-        print ndim, act_func_names
+        print(ndim, act_func_names)
 
         error = xor.check_gradients(training_data.inputs,
                                  training_data.outputs,
@@ -1417,40 +1418,40 @@ def xor_test(n=10, max_iter=100):
         if np.isnan(error):
             raise ValueError("Calculation error occurred.")
 
-        print "Gradient calc error:", error
+        print("Gradient calc error:", error)
 
         n_iter = np.random.choice(max_iter_choices)
         train(xor, training_data, max_iter=n_iter)
         cost, grad = xor.cost_function(training_data.inputs, training_data.outputs)
-        print "Cost after training:", cost
+        print("Cost after training:", cost)
 
         success = True if cost < 0.01 else False
         train_record.append((success, tuple(ndim), tuple(act_func_names)))
 
-    print "\nSummary: %d out of %d tests successful after %d-%d iterations." % \
+    print("\nSummary: %d out of %d tests successful after %d-%d iterations." % \
             (
                 sum((item[0] for item in train_record)),
                 n,
                 max_iter_choices[0],
                 max_iter_choices[-1]
-            )
+            ))
 
-    print "\nFeatures of most successful networks"
-    print "Number of layers:"
+    print("\nFeatures of most successful networks")
+    print("Number of layers:")
     results = [(len(item[1]) - 1) for item in train_record if item[0] is True]
-    print "\n".join([("%d: %d" % item) for item in top_ranked(results)[0:5]])
+    print("\n".join([("%d: %d" % item) for item in top_ranked(results)[0:5]]))
 
-    print "\nTotal number of neurons:"
+    print("\nTotal number of neurons:")
     results = [sum(item[1][1:]) for item in train_record if item[0] is True]
-    print "\n".join([("%d: %d" % item) for item in top_ranked(results)[0:5]])
+    print("\n".join([("%d: %d" % item) for item in top_ranked(results)[0:5]]))
 
-    print "\nOutput layer act_func:"
+    print("\nOutput layer act_func:")
     results = [item[2][-1] for item in train_record if item[0] is True]
-    print "\n".join([("%s: %d" % item) for item in top_ranked(results)[0:5]])
+    print("\n".join([("%s: %d" % item) for item in top_ranked(results)[0:5]]))
 
-    print "\nAct_func combination:"
+    print("\nAct_func combination:")
     results = [item[2] for item in train_record if item[0] is True]
-    print "\n".join([("%s: %d" % item) for item in top_ranked(results)[0:5]])
+    print("\n".join([("%s: %d" % item) for item in top_ranked(results)[0:5]]))
 
 
 def check_gradients(lambda_param=0.0):
@@ -1518,9 +1519,9 @@ def check_gradients(lambda_param=0.0):
     # Visually examine the two gradient computations.  The two
     # columns you get should be very similar.
     for (c1, c2) in zip(numgrad, cost[1]):
-        print c1, c2
-    print 'The above two columns you get should be very similar.\n' + \
-          '(Left-Numerical Gradient, Right-Analytical Gradient)\n\n'
+        print(c1, c2)
+    print('The above two columns you get should be very similar.\n' + \
+          '(Left-Numerical Gradient, Right-Analytical Gradient)\n\n')
 
     # Evaluate the norm of the difference between two solutions.
     # If you have a correct implementation, and assuming you used
@@ -1529,9 +1530,9 @@ def check_gradients(lambda_param=0.0):
     diff = np.linalg.norm((numgrad - cost[1]), ord=2) / \
         np.linalg.norm((numgrad + cost[1]), ord=2)
 
-    print 'If your backpropagation implementation is correct, then \n' + \
+    print('If your backpropagation implementation is correct, then \n' + \
           'the relative difference will be small (less than 1e-9). \n' + \
-          '\nRelative Difference: %g\n' % diff
+          '\nRelative Difference: %g\n' % diff)
 
 
 def checkActFuncGradients(func_list):
@@ -1545,13 +1546,13 @@ def checkActFuncGradients(func_list):
     for f in func_list:
         act_func = f[0]
         grad_func = f[1]
-        print "\n{}, {}:".format(act_func, grad_func)
+        print("\n{}, {}:".format(act_func, grad_func))
         (xa, xn) = \
             grad_func(x_range), \
             compute_function_gradient(act_func, x_range)
-        print " x, grad_func, num. est."
+        print(" x, grad_func, num. est.")
         for i, x in enumerate(x_range):
-            print " {}, {}, {}".format(x, xa[i], xn[i])
+            print(" {}, {}, {}".format(x, xa[i], xn[i]))
 
 
 # THE FOLLOWING FUNCTION IS ONLY FOR TESTING!
@@ -1582,9 +1583,9 @@ def compute_derivative_numerically(J, theta):
     n = len(theta)
 
     if n > 1000:
-        print ("Warning: Computing the numerical gradients with",
+        print("Warning: Computing the numerical gradients with",
                n, "weights could take a long time!")
-        raw_input("Program paused. Press enter to continue.")
+        input("Program paused. Press enter to continue.")
 
     for p in range(n):
 
@@ -1625,8 +1626,8 @@ def main():
 
     # Demo - XOR net
 
-    print "\n-------- Demonstration of MLP Network --------"
-    print "\nDemo: XOR logic"
+    print("\n-------- Demonstration of MLP Network --------")
+    print("\nDemo: XOR logic")
 
     training_data = (
         (0.0, 0.0, 0.0),
@@ -1656,9 +1657,9 @@ def main():
     #    cost_function='mse'
     #)
 
-    print xor, "created"
+    print(xor, "created")
 
-    print "Randomly initialize weights..."
+    print("Randomly initialize weights...")
     xor.initialize_weights()
 
     training_set = MLPTrainingData(ndim=xor.dimensions, data=training_data)
@@ -1671,16 +1672,16 @@ def main():
         lambda_param=lambda_param
     )
 
-    print "Initial error:", J
+    print("Initial error:", J)
 
-    print "\nCheck gradient functions of activation functions..."
+    print("\nCheck gradient functions of activation functions...")
 
-    raw_input("Program paused. Press enter to continue.")
+    input("Program paused. Press enter to continue.")
 
     # Check gradient functions by running checkActFuncGradients
     checkActFuncGradients(activation_functions.values())
 
-    raw_input("Program paused. Press enter to continue.")
+    input("Program paused. Press enter to continue.")
 
     xor.check_gradients(
         training_set.inputs,
@@ -1688,18 +1689,18 @@ def main():
         lambda_param=lambda_param
     )
 
-    raw_input("Program paused. Press enter to continue.")
+    input("Program paused. Press enter to continue.")
 
-    print "Begin training..."
+    print("Begin training...")
 
     res = train(xor, training_set, max_iter=1000, lambda_param=lambda_param)
 
-    print "Error after learning:", res.fun
+    print("Error after learning:", res.fun)
 
     xor.set_weights(res.x)
 
-    print "Network performance [predictions, training data]:"
-    print np.array_str(
+    print("Network performance [predictions, training data]:")
+    print(np.array_str(
         np.concatenate(
             (
                 xor.predict(training_set.inputs),
@@ -1709,10 +1710,10 @@ def main():
         )
         # precision=3,
         # suppress_small=True
-    )
+    ))
 
-    print "Range of weight values:"
-    print np.min(xor.weights), np.max(xor.weights)
+    print("Range of weight values:")
+    print(np.min(xor.weights), np.max(xor.weights))
 
     def z(x, y):
         """Function returns network output value for the given x, y."""
@@ -1737,8 +1738,8 @@ def main():
         ax.set_zlabel('output')
         plt.show()
 
-    print "Generating plot in separate window."
-    print "Close plot window when done.."
+    print("Generating plot in separate window.")
+    print("Close plot window when done..")
 
     show_plot()
 
