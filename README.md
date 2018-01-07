@@ -1,7 +1,7 @@
-# mlp
-Simple Python implementation of feed-forward multi-layer perceptron (MLP) neural networks using numpy and scipy.
+# mlpnet.py
+Python implementation of feed-forward multi-layer perceptron (MLP) neural networks using numpy and scipy based on theory taught by Andrew Ng on coursera.org and the Octave code examples from this course.
 
-This is a work-in-progress.  Still some bugs and fixes to do so don't recommend using this yet...
+This is still a work-in-progress.  Still some bugs and fixes to do so don't recommend using this yet...
 
 ## Applications
 
