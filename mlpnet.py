@@ -1,47 +1,51 @@
 #!/usr/bin/env python
-"""Neural network simulator
+"""Neural Network Simulator
 
-    @author: Bill Tubbs
-    Date: 31/12/2017
+@author: Bill Tubbs
+Revision date: 2017-01-07
 
-    This module provides classes to simulate Multi-Layer
-    Perceptron (MLP) neural networks for machine learning
-    applications.
+This Python module provides classes to simulate Multi-Layer
+Perceptron (MLP) neural networks for machine learning
+applications. It is an efficient vectorized implementation
+using numpy arrays and scipy optimization algorithms.
 
-    Based on theory taught by Andrew Ng on coursera.org
-    and the Octave code examples from this course.
+Based on theory taught by Andrew Ng on coursera.org
+and adapted from the Octave code examples from this course
+as well as updates from the 2017 deeplearning.ai Neural
+etworks and Deep Learning course.
 
-    Python modules required to run this module:
+Python modules required to run this module:
 
-    numpy for:
-     - multi-dimensional array manipulation
-     - arctan, tanh and other useful functions
-    scipy for:
-     - expit - a fast vectorized version of the Sigmoid function
-     - minimize - optimization algorithm used for learning.
-    matplotlib.pyplot
-     - for plotting surface plots etc.
+numpy for:
+ - multi-dimensional array manipulation
+ - tanh and other useful functions
+scipy for:
+ - expit - a fast vectorized version of the Sigmoid function
+ - minimize - optimization algorithm used for learning
+matplotlib.pyplot
+ - only needed for the demo in main()
+future
+ - needed if running Python 2 for builtins such as input()
 
-    TODO list:
-    - Confirm if gradients are being calculated correctly
-      for activation functions other than sigmoid - may have to
-      use an assertion to prevent use of other activation functions
-      in cost_function_log().
-    - Consider making activation and gradient functions into named
-      tuples instead of regular tuples.
-    - consider detaching cost_functions (log, mse) from the
-      MLPNetwork class
-    - otpimize sigmoid derivative calculation (and tanh?) to
-      take advantage of fact that derivative is function of
-      the sigmoid
-    - Try instantiating the A[]'s with the 1.0 values in place
-      and then set the remaining values using an assignment
-    - find a way to connect the inputs of one network to the
-      outputs of another (ideally using a name-object reference
-      so no copying is required).
-    - Consider whether to move train to a method of network (or
-      not).
-
+TODO list:
+- Confirm if gradients are being calculated correctly
+  for activation functions other than sigmoid - may have to
+  use an assertion to prevent use of other activation functions
+  in cost_function_log().
+- Consider making activation and gradient functions into named
+  tuples instead of regular tuples.
+- consider detaching cost_functions (log, mse) from the
+  MLPNetwork class
+- otpimize sigmoid derivative calculation (and tanh?) to
+  take advantage of fact that derivative is function of
+  the sigmoid
+- Try instantiating the A[]'s with the 1.0 values in place
+  and then set the remaining values using an assignment
+- find a way to connect the inputs of one network to the
+  outputs of another (ideally using a name-object reference
+  so no copying is required).
+- Consider whether to move train to a method of network (or
+  not).
 """
 
 from functools import partial
@@ -74,7 +78,7 @@ class MLPError(Exception):
 # module.
 sigmoid = expit
 
-def sigmoid_gradient(z, g=None):
+def sigmoid_gradient(z, a=None):
     """sigmoid_gradient(z)
 
     sigmoid_gradient returns the derivative of the sigmoid function
@@ -85,8 +89,10 @@ def sigmoid_gradient(z, g=None):
     z : ndarray
         The ndarray to apply sigmoid_gradient to element-wise.
 
-    g : ndarray
-        (optional) An array containing the values sigmoid(z).
+    a : ndarray
+        (optional) An array containing the values sigmoid(z). If
+        this has already been calculated, it will speed up the
+        computation.
 
     Returns
     -------
@@ -95,69 +101,60 @@ def sigmoid_gradient(z, g=None):
         are the derivatives of the corresponding entry of z.
     """
 
-    # TODO: Can we make use of this short-cut if sigmoid(z)
-    # has already been calculated?
-    if g is None:
-        g = sigmoid(z)
+    if a is None:
+        a = sigmoid(z)
 
-    # Compute and return the derivative
-    return g*(1.0 - g)
-
-
-# Came across this alternative way to get the efficiency of
-# the Sigmoid derivative
-# See here: https://databoys.github.io/Feedforward/
-
-def d_sigmoid(y):
-    """derivative of the sigmoid function y = sigmoid(z)
-    but as a function of y.
-
-    Returns: y * (1.0 - y)
-    """
-
-    return y * (1.0 - y)
+    return a*(1.0 - a)
 
 
 # 2. ArcTan activation function and gradient
+
+# Use numpy vectorized version
 arctan = np.arctan
 
-def arctan_gradient(z):
+def arctan_gradient(z, a=None):
     """arctan_gradient(z) returns the derivative of the arctan
-    activation function evaluated at z."""
+    activation function evaluated at z.
 
-    return 1.0/(z*z + 1.0)
+    Providing a value for a has no effect.  The argument is only
+    there for consistency with other activation functions."""
+
+    # There is no faster way to compute this using a
+    return 1.0/(z**2 + 1.0)
 
 
 # 3. Hyperbolic tangent (tanh) activation function and gradient
+
+# Use numpy vectorized version
 tanh = np.tanh
 
-def tanh_gradient(z):
+def tanh_gradient(z, a=None):
     """tanh_gradient(z) returns the derivative of the tanh
-    activation function evaluated at z."""
+    activation function evaluated at z.
 
-    return 1.0 - tanh(z)**2
+    If a=tanh(z) is provided, then the computation will be
+    significantly faster."""
 
+    if a is None:
+        a = tanh(z)
 
-def d_tanh(y):
-    """derivative of the tanh function y = tanh(z)
-    but as a function of y.
-
-    Returns: 1 - y*y
-    """
-    return 1 - y*y
+    return 1.0 - a**2
 
 
 # 4. Linear activation function and gradient
 
 def linear(z):
-    """linear(z) is a linear activation function
-    that returns z."""
+    """linear(z) is a linear activation function that
+    returns z."""
 
     return z
 
-def linear_gradient(z):
+def linear_gradient(z, a=None):
     """linear_gradient(z) returns the derivative of the
-    linear activation which is 1.0."""
+    linear activation function which is 1.0.
+
+    Providing a value for a has no effect.  The argument is only
+    there for consistency with other activation functions."""
 
     return np.ones(z.shape)
 
@@ -168,14 +165,17 @@ def relu(z):
     """relu(z) is the activation function known as ReLU
     (rectified linear unit).
     """
+
     return z*(z > 0)
     # return np.maximum(0, z)  # Alternative - slightly slower
 
 
-def relu_gradient(z):
+def relu_gradient(z, a=None):
     """relu_gradient(z) returns the gradient of the ReLU
-    (Rectified Linear Unit) activation function.
-    """
+    (Rectified Linear Unit) activation function
+
+    Providing a value for a has no effect.  The argument is only
+    there for consistency with other activation functions."""
 
     return (z > 0).astype(float)
 
@@ -472,8 +472,9 @@ class MLPNetwork(object):
         self.inputs = self.layers[0].outputs[1:]
         self.outputs = self.layers[self.n_layers - 1].outputs[1:]
 
-    def initialize_weights(self, epsilon=0.12, method='random'):
-        """Set the weight values to random numbers in the range -/+ epsilon."""
+    def initialize_weights(self, epsilon=0.01, method='random'):
+        """Set the weight values to random numbers in the range +/- epsilon."""
+
         if method == 'random':
             self.weights[:] = (
                 np.random.rand(self.n_weights)*2.0 - 1
