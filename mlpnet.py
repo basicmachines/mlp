@@ -28,8 +28,6 @@ future
  - needed if running Python 2 for builtins such as input()
 
 TODO list:
-- May have to use an assertion to prevent use of other
-  activation functions in cost_function_log().
 - Consider making activation and gradient functions into named
   tuples instead of regular tuples.
 - consider detaching cost_functions (log, mse) from the
@@ -45,7 +43,9 @@ TODO list:
 - Consider whether to move train to a method of network (or
   not).
 - Change training data subsets into a dictionary for easier
-  retrieval.
+  retrieval
+- Remove MLP from class names (module name is sufficient)
+- Create a classifier class that inherits from MLPNetowrk.
 """
 
 from functools import partial
