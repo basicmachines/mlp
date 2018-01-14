@@ -28,10 +28,8 @@ future
  - needed if running Python 2 for builtins such as input()
 
 TODO list:
-- Confirm if gradients are being calculated correctly
-  for activation functions other than sigmoid - may have to
-  use an assertion to prevent use of other activation functions
-  in cost_function_log().
+- May have to use an assertion to prevent use of other
+  activation functions in cost_function_log().
 - Consider making activation and gradient functions into named
   tuples instead of regular tuples.
 - consider detaching cost_functions (log, mse) from the
@@ -46,6 +44,8 @@ TODO list:
   so no copying is required).
 - Consider whether to move train to a method of network (or
   not).
+- Change training data subsets into a dictionary for easier
+  retrieval.
 """
 
 from functools import partial
@@ -65,6 +65,9 @@ class MLPError(Exception):
     """Base class for exceptions in this module."""
     pass
 
+# Use these if you want to raise or catch Runtimewarnings in numpy:
+np.seterr(all='warn')
+#np.seterr(all='raise')
 
 # ---------------- ACTIVATION FUNCTION DEFINITIONS ---------------------
 
@@ -637,10 +640,23 @@ class MLPNetwork(object):
                 )
 
         # Cost function
-        # Negative log likelihood of the Bernoulli distribution
+        # Negative log-likelihood of the Bernoulli distribution
         # (vectorized)
         # This only works with data sets where y = 0.0 or 1.0.
-        J = np.sum(-Y*np.log(A[-1]) - (1.0 - Y)*np.log(1.0 - A[-1]))/m
+        try:
+            J = np.sum(-Y*np.log(A[-1]) - (1.0 - Y)*np.log(1.0 - A[-1]))/m
+        except FloatingPointError:
+            n_zeros = np.sum(np.any(A[-1] == 0.0))
+            n_ones = np.sum(np.any(A[-1] == 1.0))
+            messages = ["FloatingPointError occurred."]
+            if n_zeros > 0:
+                messages.append("%d network output values are 0.0." % n_zeros)
+            if n_ones > 0:
+                messages.append("%d network output values are 1.0." % n_ones)
+            raise ValueError( " ".join(messages))
+        # Note: numpy will only raise a warning or error if
+        # np.seterr(all='raise')
+        #
         # %timeit returned 0.448 ms
 
         # Add regularization terms
@@ -697,6 +713,7 @@ class MLPNetwork(object):
         # For negative log-likelihood cost function and with
         # the sigmoid function in the output layer, sigma is
         # simply A - Y:
+        assert self.layers[-1].act_func == activation_functions["sigmoid"]
         sigma[-1] = A[-1] - Y
 
         # Iterate over the hidden layers to back-propagate
@@ -713,7 +730,8 @@ class MLPNetwork(object):
                                 Z[j]
                             ),
                             axis=1
-                        )
+                        ),
+                        A[j] # 6.5 to 7.4% reduction in execution time
                     )
             )[:, 1:]
 
@@ -875,9 +893,10 @@ class MLPNetwork(object):
                                 Z[j]
                             ),
                             axis=1
+                        ),
+                        A[j] # Approx. 7% reduction in execution time
                     )
-                )
-            )[:, 1:]
+                )[:, 1:]
 
         # Calculate the deltas and gradients for each layer
         for j, layer in enumerate(self.layers[1:], start=1):
@@ -1313,7 +1332,7 @@ def train(net, data, max_iter=1, update=True, disp=False, method='L-BFGS-B',
     if update:
         net.weights[:] = res.x
 
-    print("Solver returned the following message:", str(res.message))
+    print("Solver returned the following message:\n%s" % res.message)
 
     return res
 
@@ -1665,7 +1684,7 @@ def main():
 
     training_set = MLPTrainingData(ndim=xor.dimensions, data=training_data)
 
-    lambda_param = 0.000001
+    lambda_param = 0.7
 
     (J, grad) = xor.cost_function(
         training_set.inputs,
