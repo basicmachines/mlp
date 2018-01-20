@@ -28,15 +28,15 @@ future
  - needed if running Python 2 for builtins such as input()
 
 TODO list:
+- Need to eliminate np.concatenate - taking 50% of time
+  Try instantiating the A[]'s with the 1.0 values in place
+  and then set the remaining values using an assignment
+  Better alternative: move to separate weights + biases
 - Consider making activation and gradient functions into named
-  tuples instead of regular tuples.
+  tuples instead of regular tuples - or not.
 - consider detaching cost_functions (log, mse) from the
   MLPNetwork class
-- otpimize sigmoid derivative calculation (and tanh?) to
-  take advantage of fact that derivative is function of
-  the sigmoid
-- Try instantiating the A[]'s with the 1.0 values in place
-  and then set the remaining values using an assignment
+- Break up common parts of cost_functions into sub-functions
 - find a way to connect the inputs of one network to the
   outputs of another (ideally using a name-object reference
   so no copying is required).
@@ -45,7 +45,8 @@ TODO list:
 - Change training data subsets into a dictionary for easier
   retrieval
 - Remove MLP from class names (module name is sufficient)
-- Create a classifier class that inherits from MLPNetowrk.
+- Create a classifier class that inherits from MLPNetowrk
+- Add Softmax function
 """
 
 from functools import partial
@@ -119,7 +120,7 @@ def arctan_gradient(z, a=None):
     """arctan_gradient(z) returns the derivative of the arctan
     activation function evaluated at z.
 
-    Providing a value for a has no effect.  The argument is only
+    Providing a value for a has no effect. The argument is only
     there for consistency with other activation functions."""
 
     # There is no faster way to compute this using a
@@ -156,7 +157,7 @@ def linear_gradient(z, a=None):
     """linear_gradient(z) returns the derivative of the
     linear activation function which is 1.0.
 
-    Providing a value for a has no effect.  The argument is only
+    Providing a value for a has no effect. The argument is only
     there for consistency with other activation functions."""
 
     return np.ones(z.shape)
@@ -175,12 +176,44 @@ def relu(z):
 
 def relu_gradient(z, a=None):
     """relu_gradient(z) returns the gradient of the ReLU
-    (Rectified Linear Unit) activation function
+    (Rectified Linear Unit) activation function at z.
 
-    Providing a value for a has no effect.  The argument is only
+    Providing a value for a has no effect. The argument is only
     there for consistency with other activation functions."""
 
     return (z > 0).astype(float)
+
+# 6. Softmax
+
+def softmax(z):
+    """softmax(z) is a vectorized version of the softmax
+    function which can be used to simualate a probability
+    distribution (sum of outputs = 0.0)."""
+
+    # This is needed to prevent numerical overflow
+    exps = np.exp(z - np.max(z))
+
+    if exps.ndim < 2:
+        return exps / np.sum(exps)
+    else:
+        return exps / exps.sum(axis=1, keepdims=True)
+
+def softmax_gradient(z, y, a):
+    """softmax(z) returns the gradients of the softmax
+    activation function for the inputs z and desired
+    output y.
+
+    Providing a value is optional and reduces computation."""
+
+    # TODO: Not sure this is correct. Need to work on it.
+    # Might be better to just implement softmax in the cost_function
+    # rather than as an activation function
+    # See here: http://cs231n.github.io/neural-networks-case-study/
+    grad = np.zeros(z.shape)
+    if i == j:
+        return a*(1 - z)
+    else:
+        return -a*z
 
 # This dictionary is used to reference activation functions
 # and their derivatives by name
@@ -475,13 +508,38 @@ class MLPNetwork(object):
         self.inputs = self.layers[0].outputs[1:]
         self.outputs = self.layers[self.n_layers - 1].outputs[1:]
 
-    def initialize_weights(self, epsilon=0.01, method='random'):
-        """Set the weight values to random numbers in the range +/- epsilon."""
+    def initialize_weights(self, epsilon=0.01, method='he'):
+        """Set the network's weights to random values. Currently,
+        two methods are implemented:
 
-        if method == 'random':
-            self.weights[:] = (
-                np.random.rand(self.n_weights)*2.0 - 1
-            )*epsilon
+        Arguments
+
+        epsilon - Defines the variance or range of the random values
+                  to use. This is only used if the 'normal' method
+                  is selected (see below).
+
+        method  - Method to use:
+
+                  method='normal'. All weights are initialized with
+                  random numbers from the same zero-mean normal
+                  distribution with a variance of epsilon.
+
+                  method='he'. This is the method recommended by He
+                  et al. (2015) which is intended for use with the
+                  ReLU activation function. It also uses a zero-mean
+                  Gaussian distribution but the standard deviation
+                  is set to np.sqrt(2/n[l-1]) where n[l-1] is the
+                  number of nodes in the previous layer.
+        """
+
+        if method == 'normal':
+            self.weights[:] = np.random.randn(self.n_weights)*epsilon
+        elif method == 'he':
+            for l in range(1, self.n_layers):
+                layer = self.layers[l]
+                shape = layer.weights.shape
+                epsilon = np.sqrt(2.0/shape[1])
+                layer.weights[:] = np.random.randn(shape[0], shape[1])*epsilon
         else:
             raise ValueError("Invalid value for keyword argument 'method'")
 
@@ -614,8 +672,15 @@ class MLPNetwork(object):
         # A[0] is the input matrix (network inputs from training data).
         # Create it from a copy of the input data, X with a leading column
         # of ones to simulate the bias terms.
+
+        # 20% of function time on this command:
         A[0] = np.concatenate((np.ones((m, 1), dtype=np.float), X), axis=1)
 
+        # This is the same but not quite as fast:
+        #A[0] = np.ones((m, 1 + X.shape[1]), dtype=np.float)
+        #A[0][:,1:] = X
+
+        # 38% of function time in this loop:
         for j, layer in enumerate(self.layers[1:], start=1):
 
             # Calculate output values of current layer based on
@@ -643,6 +708,7 @@ class MLPNetwork(object):
         # Negative log-likelihood of the Bernoulli distribution
         # (vectorized)
         # This only works with data sets where y = 0.0 or 1.0.
+        # 8% of function time in this loop:
         try:
             J = np.sum(-Y*np.log(A[-1]) - (1.0 - Y)*np.log(1.0 - A[-1]))/m
         except FloatingPointError:
@@ -659,6 +725,7 @@ class MLPNetwork(object):
         #
         # %timeit returned 0.448 ms
 
+
         # Add regularization terms
         if lambda_param != 0.0:
 
@@ -672,18 +739,11 @@ class MLPNetwork(object):
 
         # Otherwise, gradients will be returned in the array grad
         # which has the same dimensions as weights
+        # 34% of function time in rest of function below here
         grad = np.zeros(self.n_weights, dtype=np.float)
 
         # sigma, delta and theta_grad arrays for each layer
-        # will be stored in the following lists
-
-        # Calcualte dJ/dZ (sigma) for the output layer:
-        # TODO: Consider renaming sigma dZ for consistency with
-        # Andrew Ng's latest course material
-        sigma = [None]*self.n_layers
-
-        # Changes to each weight
-        delta = [None]*self.n_layers
+        # will be stored in lists
 
         # Partial derivatives of error w.r.t. each weight
         theta_grad = [None]*self.n_layers
@@ -710,6 +770,11 @@ class MLPNetwork(object):
             previous = layer
             first = last
 
+        # Calcualte dJ/dZ (sigma) for the output layer:
+        # TODO: Consider renaming sigma dZ for consistency with
+        # Andrew Ng's latest course material
+        sigma = [None]*self.n_layers
+
         # For negative log-likelihood cost function and with
         # the sigmoid function in the output layer, sigma is
         # simply A - Y:
@@ -734,6 +799,9 @@ class MLPNetwork(object):
                         A[j] # 6.5 to 7.4% reduction in execution time
                     )
             )[:, 1:]
+
+        # Changes to each weight
+        delta = [None]*self.n_layers
 
         # Calculate the deltas and gradients for each layer
         for j, layer in enumerate(self.layers[1:], start=1):
@@ -839,13 +907,7 @@ class MLPNetwork(object):
         grad = np.zeros(self.n_weights, dtype=np.float)
 
         # sigma, delta and theta_grad arrays for each layer
-        # will be stored in the following lists
-
-        # Errors at each node
-        sigma = [None]*self.n_layers
-
-        # Changes to each weight
-        delta = [None]*self.n_layers
+        # will be stored in lists
 
         # Partial derivatives of error w.r.t. each weight
         theta_grad = [None]*self.n_layers
@@ -881,6 +943,9 @@ class MLPNetwork(object):
         else:
             sigma[-1] = (A[-1] - Y)*self.layers[-1].act_func[1](Z[-1])
 
+        # Errors at each node
+        sigma = [None]*self.n_layers
+
         # Iterate over the hidden layers to back-propagate
         # the errors
         for j in range(self.n_layers - 2, 0, -1):
@@ -898,13 +963,13 @@ class MLPNetwork(object):
                     )
                 )[:, 1:]
 
+        # Changes to each weight
+        delta = [None]*self.n_layers
+
         # Calculate the deltas and gradients for each layer
         for j, layer in enumerate(self.layers[1:], start=1):
 
-            #TODO: Confirm - added '*layer.act_func[1](Z[j])' to make
-            # this work for MSE. Previously was:
             delta[j] = np.dot(sigma[j].T, A[j - 1])
-            #delta[j] = (sigma[j]*layer.act_func[1](Z[j])).T.dot(A[j - 1])
 
             theta_grad[j][:] = (
                 delta[j] + lambda_param * np.concatenate(
@@ -1665,7 +1730,7 @@ def main():
     xor = MLPNetwork(
         ndim,
         name="XOR",
-        act_funcs=[(sigmoid, sigmoid_gradient), (sigmoid, sigmoid_gradient)],
+        act_funcs=[(tanh, tanh_gradient), (sigmoid, sigmoid_gradient)],
         cost_function='log'
     )
 
@@ -1713,7 +1778,8 @@ def main():
 
     print("Begin training...")
 
-    res = train(xor, training_set, max_iter=1000, lambda_param=lambda_param)
+
+    res = train(xor, training_set, max_iter=1000, lambda_param=lambda_param, disp=True)
 
     print("Error after learning:", res.fun)
 
