@@ -28,8 +28,8 @@ future
  - needed if running Python 2 for builtins such as input()
 
 TODO list:
-- Upgrade cost functions so they can be run from network
-- Break up common parts of cost_functions into sub-functions
+- Documentation of cost_functions (log, mse) needs updating
+- Also train()
 - find a way to connect the inputs of one network to the
   outputs of another (ideally using a name-object reference
   so no copying is required).
@@ -663,6 +663,7 @@ class MLPNetwork(object):
         # Calculate the outputs of each layer based on the inputs
         # of the layer below, remembering to add a column of ones
         # to represent the bias terms
+        # TODO: Is there a way to avoid the concatenate here?
         for j, layer in enumerate(self.layers[1:], start=1):
 
             outputs = layer.act_func[0](
