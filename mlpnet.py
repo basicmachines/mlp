@@ -45,7 +45,7 @@ TODO list:
 - Change training data subsets into a dictionary for easier
   retrieval
 - Remove MLP from class names (module name is sufficient)
-- Create a classifier class that inherits from MLPNetowrk
+- Create a classifier class that inherits from MLPNetwork
 - Add Softmax function
 """
 
@@ -371,11 +371,13 @@ class MLPNetwork(object):
                      activation function defined in the variable
                      default_act_func will be used for all layers.
     cost_function -- Specify the function to use as a cost function as
-                     a string.  Current options include 'log' for
-                     logistic or 'mse' for mean-squared error.  Note that
-                     you must choose a cost function appropriate to the
-                     problem you are solving.  For the logistic cost
-                     function, all desired outputs must be 0.0 or 1.0.
+                     a string.  Current options include 'log' for the
+                     negative log-likelihood or 'mse' for mean-squared
+                     error.  Note that you must choose a cost function
+                     appropriate to the problem you are solving. For the
+                     negative log-likelihood function, desired outputs
+                     must be 0.0 or 1.0 and a sigmoid acrtivation function
+                     must be used in the output layer.
 
     Attributes:
     name       -- a string to label the network.
@@ -433,9 +435,9 @@ class MLPNetwork(object):
         self.n_neurons = sum(self.dimensions[1:])
 
         if cost_function == 'mse':
-            self.cost_function = self.cost_function_mse
+            self.cost_function = cost_function_mse
         elif cost_function == 'log':
-            self.cost_function = self.cost_function_log
+            self.cost_function = cost_function_log
         else:
             raise MLPError("Cost function choice '%s' not recognised" \
                             % cost_function)
@@ -508,7 +510,7 @@ class MLPNetwork(object):
         self.inputs = self.layers[0].outputs[1:]
         self.outputs = self.layers[self.n_layers - 1].outputs[1:]
 
-    def initialize_weights(self, epsilon=0.01, method='he'):
+    def initialize_weights(self, epsilon=0.01, method='xavier'):
         """Set the network's weights to random values. Currently,
         two methods are implemented:
 
@@ -524,22 +526,30 @@ class MLPNetwork(object):
                   random numbers from the same zero-mean normal
                   distribution with a variance of epsilon.
 
+                  method='xavier'. This is the method recommended by
+                  Xavier Glorot (year?) which is intended for use with
+                  activation functions such as tanh and sigmoid where
+                  the gradient of the activation function is 1 at x=0.
+                  It uses a zero-mean Gaussian distribution but the
+                  variance is set to np.sqrt(1/n[l-1]) where n[l-1] is
+                  the number of nodes in the previous (input) layer.
+
                   method='he'. This is the method recommended by He
                   et al. (2015) which is intended for use with the
-                  ReLU activation function. It also uses a zero-mean
-                  Gaussian distribution but the standard deviation
-                  is set to np.sqrt(2/n[l-1]) where n[l-1] is the
-                  number of nodes in the previous layer.
+                  ReLU activation function. It is the same as the
+                  Xavier et al. method but the variance is set to
+                  np.sqrt(2/n[l-1]).
         """
 
         if method == 'normal':
             self.weights[:] = np.random.randn(self.n_weights)*epsilon
-        elif method == 'he':
+        elif method in ('he', 'xavier'):
+            n = 2.0 if method == 'he' else 1.0
             for l in range(1, self.n_layers):
                 layer = self.layers[l]
                 shape = layer.weights.shape
-                epsilon = np.sqrt(2.0/shape[1])
-                layer.weights[:] = np.random.randn(shape[0], shape[1])*epsilon
+                epsilon = np.sqrt(n/shape[1])
+                layer.weights[:] = np.random.standard_normal(shape)*epsilon
         else:
             raise ValueError("Invalid value for keyword argument 'method'")
 
@@ -628,6 +638,164 @@ class MLPNetwork(object):
                 first = last
 
         return theta
+
+    def predict(self, inputs, weights=None):
+        """predict produces a set of predictions using the neural network
+        with its current weights or with a new set of weights provided.
+        p = predict(inputs) calculates the output predictions for a set
+        of inputs.
+
+        Arguments:
+            X       -- 2-dimensional array of network inputs
+            weights -- (optional) one-dimensional array of weight values."""
+
+        # convert to 2-dimensional array
+        inputs = np.asarray(inputs)
+        if len(inputs.shape) == 1:
+            inputs.shape = (1, inputs.shape[0])
+
+        # Useful values
+        m = inputs.shape[0]
+
+        theta = self.get_theta(weights=weights)
+
+        outputs = inputs
+
+        # Calculate the outputs of each layer based on the inputs
+        # of the layer below, remembering to add a column of ones
+        # to represent the bias terms
+        for j, layer in enumerate(self.layers[1:], start=1):
+
+            outputs = layer.act_func[0](
+                np.dot(
+                    np.concatenate(
+                        (np.ones((m, 1), dtype=np.float), outputs),
+                        axis=1
+                    ),
+                    theta[j].T)
+            )
+
+        return outputs
+
+    def set_weights(self, weights):
+        """Update network weights with set of values provided.
+
+        Arguments:
+            weights -- one-dimensional array of weight values."""
+        self.weights[:] = weights
+
+    def get_act_funcs(self):
+        """Return a list of the activation functions from each
+        layer (excluding the input layer)."""
+
+        return [layer.act_func for layer in self.layers[1:]]
+
+    def __repr__(self):
+
+        # Compose a string representation of the object
+        s = []
+
+        s.append("ndim=%s" % self.dimensions.__repr__())
+
+        act_funcs = self.get_act_funcs()
+        if self.n_neurons > 0:
+            if all([x == act_funcs[0] for x in act_funcs]):
+                if act_funcs[0] != default_act_func:
+                    s.append("act_funcs=%s" % act_funcs[0].__repr__())
+            else:
+                s.append("act_funcs=%s" % act_funcs.__repr__())
+
+        try:
+            if self.name is not None:
+                s.append("name=%s" % self.name.__repr__())
+        except AttributeError:
+            pass
+
+        if self.cost_function == cost_function_log:
+            cost_function = 'log'
+        elif self.cost_function == cost_function_mse:
+            cost_function = 'mse'
+        else:
+            raise MLPError("Unrecognised cost function assigned to network.")
+
+        s.append("cost_function=%s" % cost_function.__repr__())
+
+        return "MLPNetwork(" + ", ".join(s) + ")"
+
+
+        self.act_funcs
+
+        return "name=%s, )" % (
+            self.name.__repr__(), self.dimensions.__repr__()
+        )
+
+    def check_gradients(self, X, y, weights=None, lambda_param=0.0,
+                        messages=True):
+        """check_gradients uses a numerical approximation to
+            check the gradients calculated by the backpropagation
+            algorithm.  It outputs the analytically and the
+            numerically calculated gradients so you can compare
+            them."""
+
+        if messages:
+            print('\nChecking backpropagation and gradient calculations...\n')
+
+        # If no weights were provided as an argument, use the network's
+        # current weights.
+        if weights is None:
+            weights = self.weights
+
+        # Define a cost function
+        def cost_func(p):
+            return self.cost_function(
+                X, y,
+                weights=p,
+                jac=True,
+                lambda_param=lambda_param
+            )
+
+        # Could use a partial function or lambda function instead
+        # cost_func = partial(
+        #    self.cost_function,
+        #    X, y,
+        #    jac=True,
+        #    lambda_param=lambda_param
+        #)
+
+        # cost_func = lambda p: test_model.cost_function(p, input_layer_size,
+        #                  hidden_layer_size, num_labels, X, y, lambda_param)
+
+        # cost_func returns a tuple (cost, grad)
+        cost = cost_func(weights)
+
+        numgrad = compute_derivative_numerically(cost_func, weights)
+
+        # Visually examine the two gradient computations.  The two
+        # columns you get should be very similar.
+        for (c1, c2) in zip(numgrad, cost[1]):
+            if messages:
+                print(c1, c2)
+        if messages:
+            print('The above two columns you get should be very similar.\n' +
+              '(Left-Numerical Gradient, Right-Analytical Gradient)\n\n')
+
+        if (numgrad - cost[1]).sum() == 0.0:
+            diff = 0
+        else:
+            # Evaluate the norm of the difference between two solutions.
+            # If you have a correct implementation, and assuming you used
+            # EPSILON = 0.0001 in compute_derivative_numerically, then diff
+            # below should be less than 1e-9
+            diff = np.linalg.norm((numgrad - cost[1]), ord=2) / \
+                np.linalg.norm((numgrad + cost[1]), ord=2)
+
+        if messages:
+            print("If the backpropagation implementation is correct\n" +
+                  "then the relative difference will be small (less\n" +
+                  "than 1e-9).\n")
+            print("Relative Difference: %g\n" % diff)
+
+        return diff
 
     def cost_function_log(self, X, Y, weights=None, lambda_param=0.0, jac=True):
         """
@@ -725,7 +893,6 @@ class MLPNetwork(object):
         #
         # %timeit returned 0.448 ms
 
-
         # Add regularization terms
         if lambda_param != 0.0:
 
@@ -770,7 +937,7 @@ class MLPNetwork(object):
             previous = layer
             first = last
 
-        # Calcualte dJ/dZ (sigma) for the output layer:
+        # Calculate dJ/dZ (sigma) for the output layer:
         # TODO: Consider renaming sigma dZ for consistency with
         # Andrew Ng's latest course material
         sigma = [None]*self.n_layers
@@ -778,7 +945,7 @@ class MLPNetwork(object):
         # For negative log-likelihood cost function and with
         # the sigmoid function in the output layer, sigma is
         # simply A - Y:
-        assert self.layers[-1].act_func == activation_functions["sigmoid"]
+        assert self.layers[-1].act_func is activation_functions["sigmoid"]
         sigma[-1] = A[-1] - Y
 
         # Iterate over the hidden layers to back-propagate
@@ -786,8 +953,6 @@ class MLPNetwork(object):
         for j in range(self.n_layers - 2, 0, -1):
             sigma[j] = (
                 np.dot(sigma[j + 1], theta[j + 1]) *
-                    # TODO: This could be speeded up using the
-                    # dsigmoid function or A[-1]*(1 - A[-1]) instead
                     self.layers[j].act_func[1](
                         np.concatenate(
                             (
@@ -935,16 +1100,16 @@ class MLPNetwork(object):
             previous = layer
             first = last
 
-        # Calcualte dJ/dZ (sigma) for the output layer:
+        # Errors at each node
+        sigma = [None]*self.n_layers
+
+        # Calculate dJ/dZ (sigma) for the output layer:
         if self.layers[-1].act_func == (sigmoid, sigmoid_gradient):
             sigma[-1] = (A[-1] - Y)*A[-1]*(1 - A[-1])
         elif self.layers[-1].act_func == (tanh, tanh_gradient):
             sigma[-1] = (A[-1] - Y)*(1 - A[-1]**2)
         else:
             sigma[-1] = (A[-1] - Y)*self.layers[-1].act_func[1](Z[-1])
-
-        # Errors at each node
-        sigma = [None]*self.n_layers
 
         # Iterate over the hidden layers to back-propagate
         # the errors
@@ -984,164 +1149,8 @@ class MLPNetwork(object):
         return (J, grad)
         # %timeit returned 5.40 ms
 
-    def predict(self, inputs, weights=None):
-        """predict produces a set of predictions using the neural network
-        with its current weights or with a new set of weights provided.
-        p = predict(inputs) calculates the output predictions for a set
-        of inputs.
 
-        Arguments:
-            X       -- 2-dimensional array of network inputs
-            weights -- (optional) one-dimensional array of weight values."""
-
-        # convert to 2-dimensional array
-        inputs = np.asarray(inputs)
-        if len(inputs.shape) == 1:
-            inputs.shape = (1, inputs.shape[0])
-
-        # Useful values
-        m = inputs.shape[0]
-
-        theta = self.get_theta(weights=weights)
-
-        outputs = inputs
-
-        # Calculate the outputs of each layer based on the inputs
-        # of the layer below, remembering to add a column of ones
-        # to represent the bias terms
-        for j, layer in enumerate(self.layers[1:], start=1):
-
-            outputs = layer.act_func[0](
-                np.dot(
-                    np.concatenate(
-                        (np.ones((m, 1), dtype=np.float), outputs),
-                        axis=1
-                    ),
-                    theta[j].T)
-            )
-
-        return outputs
-
-    def set_weights(self, weights):
-        """Update network weights with set of values provided.
-
-        Arguments:
-            weights -- one-dimensional array of weight values."""
-        self.weights[:] = weights
-
-    def get_act_funcs(self):
-        """Return a list of the activation functions from each
-        layer (excluding the input layer)."""
-
-        return [layer.act_func for layer in self.layers[1:]]
-
-    def __repr__(self):
-
-        # Compose a string representation of the object
-        s = []
-
-        s.append("ndim=%s" % self.dimensions.__repr__())
-
-        act_funcs = self.get_act_funcs()
-        if self.n_neurons > 0:
-            if all([x == act_funcs[0] for x in act_funcs]):
-                if act_funcs[0] != default_act_func:
-                    s.append("act_funcs=%s" % act_funcs[0].__repr__())
-            else:
-                s.append("act_funcs=%s" % act_funcs.__repr__())
-
-        try:
-            if self.name is not None:
-                s.append("name=%s" % self.name.__repr__())
-        except AttributeError:
-            pass
-
-        if self.cost_function == self.cost_function_log:
-            cost_function = 'log'
-        elif self.cost_function == self.cost_function_mse:
-            cost_function = 'mse'
-        else:
-            raise MLPError("Unrecognised cost function assigned to network.")
-
-        s.append("cost_function=%s" % cost_function.__repr__())
-
-        return "MLPNetwork(" + ", ".join(s) + ")"
-
-
-        self.act_funcs
-
-        return "name=%s, )" % (
-            self.name.__repr__(), self.dimensions.__repr__()
-        )
-
-    def check_gradients(self, X, y, weights=None, lambda_param=0.0,
-                        messages=True):
-        """check_gradients uses a numerical approximation to
-            check the gradients calculated by the backpropagation
-            algorithm.  It outputs the analytically and the
-            numerically calculated gradients so you can compare
-            them."""
-
-        if messages:
-            print('\nChecking backpropagation and gradient calculations...\n')
-
-        # If no weights were provided as an argument, use the network's
-        # current weights.
-        if weights is None:
-            weights = self.weights
-
-        # Define a cost function
-        def cost_func(p):
-            return self.cost_function(
-                X, y,
-                weights=p,
-                jac=True,
-                lambda_param=lambda_param
-            )
-
-        # Could use a partial function or lambda function instead
-        # cost_func = partial(
-        #    self.cost_function,
-        #    X, y,
-        #    jac=True,
-        #    lambda_param=lambda_param
-        #)
-
-        # cost_func = lambda p: test_model.cost_function(p, input_layer_size,
-        #                  hidden_layer_size, num_labels, X, y, lambda_param)
-
-        # cost_func returns a tuple (cost, grad)
-        cost = cost_func(weights)
-
-        numgrad = compute_derivative_numerically(cost_func, weights)
-
-        # Visually examine the two gradient computations.  The two
-        # columns you get should be very similar.
-        for (c1, c2) in zip(numgrad, cost[1]):
-            if messages:
-                print(c1, c2)
-        if messages:
-            print('The above two columns you get should be very similar.\n' +
-              '(Left-Numerical Gradient, Right-Analytical Gradient)\n\n')
-
-        if (numgrad - cost[1]).sum() == 0.0:
-            diff = 0
-        else:
-            # Evaluate the norm of the difference between two solutions.
-            # If you have a correct implementation, and assuming you used
-            # EPSILON = 0.0001 in compute_derivative_numerically, then diff
-            # below should be less than 1e-9
-            diff = np.linalg.norm((numgrad - cost[1]), ord=2) / \
-                np.linalg.norm((numgrad + cost[1]), ord=2)
-
-        if messages:
-            print("If the backpropagation implementation is correct\n" +
-                  "then the relative difference will be small (less\n" +
-                  "than 1e-9).\n")
-            print("Relative Difference: %g\n" % diff)
-
-        return diff
-
+# ------------------ MLP TRAINING DATA CLASS ----------------------
 
 class MLPTrainingData(object):
     """Data object to store training data (inputs and outputs)
@@ -1337,14 +1346,376 @@ class MLPTrainingData(object):
         return "MLPTrainingData(" + ", ".join(s) + ")"
 
 
+# ------------------ MLP TRAINER CLASS ----------------------
+
+# Functions and in future a class of object to manage training
+# of one or more networks.
+
+
+def feed_forward(net, A, Z, theta):
+
+    m = A[0].shape[0]
+
+    for j, layer in enumerate(net.layers[1:], start=1):
+
+        # Calculate output values of current layer based on
+        # outputs of previous layer
+        Z[j][:] = np.dot(A[j - 1], theta[j].T)
+
+        # Apply the activation function to ouput values
+        # Note: only add the column of ones if it is a hidden
+        # layer
+        if j == net.n_layers - 1:
+            A[j][:] = layer.act_func[0](Z[j])
+        else:
+            A[j][:,1:] = layer.act_func[0](Z[j])
+
+def train2(net, training_data, max_iter=1, update=True, disp=False,
+           method='L-BFGS-B', lambda_param=0.0, gtol=1e-6, ftol=0.01):
+    """Re-write of the train() function to eliminate unnecessary
+    re-creation of matrices and np.concenate operations."""
+
+    X, Y = training_data.inputs, training_data.outputs
+
+    # Set-up matrices needed for vectorized training
+
+    # Number of training data points
+    m = X.shape[0]
+
+    # Get the weights of each layer as a list of 2-dimensional arrays,
+    # from the network.
+    theta = net.get_theta()
+
+    # Prepare list variables for feed-forward computations
+    A = [None]*net.n_layers
+    Z = [None]*net.n_layers
+
+    # Make A[0] from a copy of the input values (network inputs
+    # from training data) with a column of ones to simulate the
+    # bias terms
+    A[0] = np.concatenate((np.ones((m, 1), dtype=np.float), X), axis=1)
+
+    for j, layer in enumerate(net.layers[1:], start=1):
+        # Prepare matrices for output values:
+        Z[j] = np.empty((m, layer.n_nodes))
+        #np.dot(A[j - 1], theta[j].T)
+
+        # Prepare matrices for A:
+        if j == net.n_layers - 1:
+            A[j] = np.empty(Z[j].shape)
+        else:
+            A[j] = np.concatenate(
+                (
+                    np.ones((m, 1), dtype=np.float),
+                    np.empty(Z[j].shape)
+                ),
+                axis=1
+            )
+
+    # Prepare array for gradients with the same
+    # dimensions as weights
+    grad = np.zeros(net.n_weights, dtype=np.float)
+
+    # Partial derivatives of error w.r.t. each weight
+    theta_grad = [None]*net.n_layers
+
+    # Changes to each weight
+    # TODO: Don't really need this cache
+    #delta = [None]*net.n_layers
+
+    # Now initialise gradient and delta arrays
+    first = 0
+    previous = net.layers[0]
+
+    for j, layer in enumerate(net.layers[1:], start=1):
+        last = first + previous.n_outputs*(layer.n_outputs - 1)
+        if last > net.n_weights:
+            raise MLPError(
+                "Error initialising indices of gradients arrays."
+            )
+
+        try:
+            theta_grad[j] = grad[first:last].reshape((layer.n_outputs \
+                            - 1, previous.n_outputs))
+        except:
+            raise MLPError(
+                "Error re-shaping the array of gradients "
+                " for layer" + str(j)
+            )
+
+        # TODO: Don't really need this cache
+        #delta[j] = np.empty(theta_grad[j].shape)
+
+        previous = layer
+        first = last
+
+    # Errors at each node
+    sigma = [None]*net.n_layers
+
+    for j in range(net.n_layers - 1, 0, -1):
+        sigma[j] = np.empty((m, net.layers[j].n_nodes))
+
+    cost_func = partial(
+        net.cost_function,
+        net,
+        training_data,
+        A,
+        Z,
+        grad,
+        sigma,
+        theta_grad,
+        lambda_param=lambda_param,
+        jac=True
+    )
+
+    #cost_func = partial(
+    #    net.cost_function,
+    #    data.inputs,
+    #    data.outputs,
+    #    jac=True,
+    #    lambda_param=lambda_param
+    #)
+
+    res = minimize(
+        cost_func,
+        net.weights,
+        method=method,
+        jac=True,
+        options={
+            'gtol': gtol,
+            'ftol': ftol * np.finfo(float).eps,
+            'disp': disp,
+            'maxiter': max_iter
+        }
+    )
+    # Other options:
+    # - CG, BFGS, Newton-CG, L-BFGS-B, TNC, SLSQP, dogleg, trust-ncg
+
+    if update:
+        net.weights[:] = res.x
+
+    print("Solver returned the following message:\n%s" % str(res.message))
+
+    return res
+
+
+def cost_function_log(net, training_data, A, Z, grad, sigma, theta_grad,
+                      weights=None, lambda_param=0.0, jac=True):
+    """
+    *** TODO: This docstring needs updating ***
+
+    (J, grad) = cost_function_log(X, Y) computes the cost (J)
+    using the logistic cost function* and gradients (grad) of
+    the network using back-propagation for the given set of
+    training data (X, Y).
+
+    *Note: This cost function is also known as the Bernoulli
+    negative log-likelihood and binary cross-entropy.  It
+    should only be used for problems such as classification
+    where y values are either 0.0 or 1.0.
+
+    Arguments:
+    X -- a set of training data points containing m rows of
+           network input data
+    Y -- a set of desired network outputs for the training
+           data containing m rows of output data
+
+    Keyword arguments:
+    weights       -- Provide a new set of weights to calculate the cost
+                     function (current network weights will not be
+                     affected).  If not specified, the cost function will
+                     use the current weights stored in the network.
+    lambda_param  -- Regularization term.  If not specified then default
+                     is lambda_param=0.0 (i.e. no regularization).
+    jac           -- If set to None or False then this function does not
+                     calculate or return the Jacobian matrix (of gradients).
+    """
+    # Get the weights of each layer as a list of 2-dimensional arrays,
+    # either from the network or from the set of weights provided.
+    theta = net.get_theta(weights=weights)
+
+    # Calculate A and Z
+    feed_forward(net, A, Z, theta)
+
+    # Desired outputs from training data
+    Y = training_data.outputs
+
+    # Number of examples in training data set
+    m = Y.shape[0]
+
+    # Cost function
+    # Negative log-likelihood of the Bernoulli distribution
+    # (vectorized)
+    # This only works with data sets where y = 0.0 or 1.0.
+    try:
+        J = np.sum(-Y*np.log(A[-1]) - (1.0 - Y)*np.log(1.0 - A[-1]))/m
+    except FloatingPointError:
+        n_zeros = np.sum(np.any(A[-1] == 0.0))
+        n_ones = np.sum(np.any(A[-1] == 1.0))
+        messages = ["FloatingPointError occurred."]
+        if n_zeros > 0:
+            messages.append("%d network output values are 0.0." % n_zeros)
+        if n_ones > 0:
+            messages.append("%d network output values are 1.0." % n_ones)
+        raise ValueError( " ".join(messages))
+    # Note: numpy will only raise a warning or error if
+    # np.seterr(all='raise')
+
+    # Add regularization terms
+    if lambda_param != 0.0:
+
+        for j, layer in enumerate(net.layers[1:], start=1):
+            J = J + lambda_param*np.sum(theta[j][:, 1:]**2)/(2.0*m)
+
+    # If jac is set to None or False then don't calculate
+    # the gradient and end here
+    if not jac:
+        return J
+
+    # Otherwise, gradients will be calculated and
+    # added to the array grad which has the same
+    # dimensions as weights
+    # grad = np.zeros(self.n_weights, dtype=np.float)
+
+    # sigma, delta and theta_grad arrays will be calculated
+    # for each layer.
+
+    # Calculate dJ/dZ (sigma) for the output layer
+    # TODO: Change sigma to dZ for consistency with A Ng course
+    # For negative log-likelihood cost function and with
+    # the sigmoid function in the output layer, sigma is
+    # simply A - Y:
+    assert net.layers[-1].act_func is activation_functions["sigmoid"]
+    sigma[-1] = A[-1] - Y
+
+    # Iterate over the hidden layers to back-propagate
+    # the errors
+    for j in range(net.n_layers - 2, 0, -1):
+        sigma[j][:] = (
+                np.dot(sigma[j + 1], theta[j + 1][:,1:])*
+                net.layers[j].act_func[1](Z[j], A[j][:,1:])
+            )
+
+    # Calculate the deltas and gradients for each layer
+    for j, layer in enumerate(net.layers[1:], start=1):
+
+        # Don't really need this
+        #delta[j][:] = np.dot(sigma[j].T, A[j - 1])
+
+        theta_grad[j][:] = np.dot(sigma[j].T, A[j - 1])/m
+
+        # Add component for regularization
+        theta_grad[j][:, 1:] += lambda_param*theta[j][:, 1:]/m
+
+    return (J, grad)
+
+
+
+def cost_function_mse(net, training_data, A, Z, grad, sigma, theta_grad,
+                      weights=None, lambda_param=0.0, jac=True):
+    """
+    *** TODO: This docstring needs updating ***
+
+    (J, grad) = cost_function_mse(X, Y) computes the cost (J)
+    using the mean-squared-error function* and gradients (grad)
+    of the network using back-propagation for the given set of
+    training data (X, Y).
+
+    *Note: This cost function is also known as the maximum
+    likelihood or sum-squared error method.  It is generally
+    useful for regression and function approximation problems.
+
+    Arguments:
+    X -- a set of training data points containing m rows of
+           network input data
+    Y -- a set of desired network outputs for the training
+           data containing m rows of output data
+
+    Keyword arguments:
+    weights       -- Provide a new set of weights to calculate the cost
+                     function (current network weights will not be
+                     affected).  If not specified, the cost function will
+                     use the current weights stored in the network.
+    lambda_param  -- Regularization term.  If not specified then default
+                     is lambda_param=0.0 (i.e. no regularization).
+    jac           -- If set to None or False then this function does not
+                     calculate or return the Jacobian matrix (of gradients).
+    """
+
+    # Get the weights of each layer as a list of 2-dimensional arrays,
+    # either from the network or from the set of weights provided.
+    theta = net.get_theta(weights=weights)
+
+    # Calculate A and Z
+    feed_forward(net, A, Z, theta)
+
+    # Desired outputs from training data
+    Y = training_data.outputs
+
+    # Number of examples in training data set
+    m = Y.shape[0]
+
+    # Regular mean-squared-error (MSE) cost function
+    J = 0.5*np.sum((A[-1] - Y)**2)/m
+
+    # Add regularization terms
+    if lambda_param != 0.0:
+
+        for j, layer in enumerate(net.layers[1:], start=1):
+            J = J + lambda_param*np.sum(theta[j][:, 1:]**2)/(2.0*m)
+
+    # If jac is set to None or False then don't calculate
+    # the gradient and end here
+    if not jac:
+        return J
+
+    # Otherwise, gradients will be calculated and
+    # added to the array grad which has the same
+    # dimensions as weights
+    # grad = np.zeros(self.n_weights, dtype=np.float)
+
+    # sigma, delta and theta_grad arrays will be calculated
+    # for each layer.
+
+    # Calculate dJ/dZ (sigma) for the output layer:
+    # TODO: Change sigma to dZ for consistency with A Ng course
+    if net.layers[-1].act_func == (sigmoid, sigmoid_gradient):
+        sigma[-1][:] = (A[-1] - Y)*A[-1]*(1 - A[-1])
+    elif net.layers[-1].act_func == (tanh, tanh_gradient):
+        sigma[-1][:] = (A[-1] - Y)*(1 - A[-1]**2)
+    else:
+        sigma[-1][:] = (A[-1] - Y)*net.layers[-1].act_func[1](Z[-1])
+
+    # Iterate over the hidden layers to back-propagate
+    # the errors
+    for j in range(net.n_layers - 2, 0, -1):
+        sigma[j][:] = (
+                np.dot(sigma[j + 1], theta[j + 1][:,1:])*
+                net.layers[j].act_func[1](Z[j], A[j][:,1:])
+            )
+
+    # Calculate the deltas and gradients for each layer
+    for j, layer in enumerate(net.layers[1:], start=1):
+
+        # Don't really need this
+        #delta[j][:] = np.dot(sigma[j].T, A[j - 1])
+
+        theta_grad[j][:] = np.dot(sigma[j].T, A[j - 1])/m
+
+        # Add component for regularization
+        theta_grad[j][:, 1:] += lambda_param*theta[j][:, 1:]/m
+
+    return (J, grad)
+
+
 def train(net, data, max_iter=1, update=True, disp=False, method='L-BFGS-B',
           lambda_param=0.0, gtol=1e-6, ftol=0.01):
-    """Trains the network (net) on a set of training data (data)
+    """Trains a network (net) on a set of training data (data)
     using the scipy.optimize.minimize function which will minimize
-    the network's cost function (net.cost_function) by changing
-    the weights (net.weights).
+    the a cost function (net.cost_function) by changing the weights
+    (net.weights).
 
-    Returns a scipy.optimize.OptimizeResult object.  See the
+    Returns a scipy.optimize.OptimizeResult object. See the
     scipy documentation for a description of its attributes.
 
     Arguments:
@@ -1397,7 +1768,7 @@ def train(net, data, max_iter=1, update=True, disp=False, method='L-BFGS-B',
     if update:
         net.weights[:] = res.x
 
-    print("Solver returned the following message:\n%s" % res.message)
+    print("Solver returned the following message:\n%s" % str(res.message))
 
     return res
 
@@ -1495,23 +1866,34 @@ def xor_test(n=10, max_iter=100):
             act_func_names.append(name)
             act_funcs.append(activation_functions[name])
         set_act_funcs(xor, act_funcs)
-        print(ndim, act_func_names)
+
+        print("\nDimensions: %s" % str(ndim))
+        print("Activation functions: %s" % str(act_func_names))
+
+        lambda_param = np.random.choice([0.0, 0.01, 0.1, 0.5, 0.8])
+        print("lambda: %f" % lambda_param)
 
         error = xor.check_gradients(training_data.inputs,
                                  training_data.outputs,
+                                 lambda_param=lambda_param,
                                  messages=False)
-        if np.isnan(error):
+
+        print("Gradient calc error: %.2g" % error)
+
+        # TODO: Training errors around 1.0e-7 occuring with ReLU
+        # function - how to avoid?
+        if np.isnan(error) or error > 1.0e-6:
             raise ValueError("Calculation error occurred.")
 
-        print("Gradient calc error:", error)
-
         n_iter = np.random.choice(max_iter_choices)
-        train(xor, training_data, max_iter=n_iter)
-        cost, grad = xor.cost_function(training_data.inputs, training_data.outputs)
-        print("Cost after training:", cost)
+        train2(xor, training_data, max_iter=n_iter)
+        cost, grad = xor.cost_function(training_data.inputs,
+                                       training_data.outputs)
+        print("Cost after training: %7.5f" % cost)
 
         success = True if cost < 0.01 else False
-        train_record.append((success, tuple(ndim), tuple(act_func_names)))
+
+        train_record.append((success, tuple(ndim), tuple(act_func_names), lambda_param))
 
     print("\nSummary: %d out of %d tests successful after %d-%d iterations." % \
             (
@@ -1525,6 +1907,7 @@ def xor_test(n=10, max_iter=100):
     print("Number of layers:")
     results = [(len(item[1]) - 1) for item in train_record if item[0] is True]
     print("\n".join([("%d: %d" % item) for item in top_ranked(results)[0:5]]))
+    n_layers_best = top_ranked(results)[0][0]
 
     print("\nTotal number of neurons:")
     results = [sum(item[1][1:]) for item in train_record if item[0] is True]
@@ -1534,10 +1917,13 @@ def xor_test(n=10, max_iter=100):
     results = [item[2][-1] for item in train_record if item[0] is True]
     print("\n".join([("%s: %d" % item) for item in top_ranked(results)[0:5]]))
 
-    print("\nAct_func combination:")
-    results = [item[2] for item in train_record if item[0] is True]
+    print("\nAct_func combination (%d layers):" % n_layers_best)
+    results = [item[2] for item in train_record if item[0] is True and (len(item[1]) - 1) == n_layers_best]
     print("\n".join([("%s: %d" % item) for item in top_ranked(results)[0:5]]))
 
+    print("\nLambda:")
+    results = [item[3] for item in train_record if item[0] is True]
+    print("\n".join([("%s: %d" % item) for item in top_ranked(results)[0:5]]))
 
 def check_gradients(lambda_param=0.0):
     """check_gradients Creates a small neural network to check the
@@ -1655,12 +2041,10 @@ def checkActFuncGradients(func_list):
 #        to theta(i).)
 #
 
-def compute_derivative_numerically(J, theta):
+def compute_derivative_numerically(J, theta, epsilon=1.0e-7):
     """Returns a numerical estimate of the partial derivatives
     of J (the gradients) for each value of theta using
     linear approximation."""
-
-    e = 1.0e-4
 
     numgrad = np.zeros(theta.shape)
     perturb = np.zeros(theta.shape)
@@ -1668,14 +2052,14 @@ def compute_derivative_numerically(J, theta):
     n = len(theta)
 
     if n > 1000:
-        print("Warning: Computing the numerical gradients with",
-               n, "weights could take a long time!")
+        print("Warning: Computing the numerical gradients with %d" % n)
+        print("weights could take a long time!")
         input("Program paused. Press enter to continue.")
 
     for p in range(n):
 
         # Set perturbation vector
-        perturb[p] = e
+        perturb[p] = epsilon
         loss1 = J(theta - perturb)
         loss2 = J(theta + perturb)
 
@@ -1686,17 +2070,16 @@ def compute_derivative_numerically(J, theta):
             loss2 = loss2[0]
 
         # Compute Numerical Gradient
-        numgrad[p] = (loss2 - loss1) / (2.0*e)
+        numgrad[p] = (loss2 - loss1) / (2.0*epsilon)
         perturb[p] = 0.0
 
     return numgrad
 
 
-def compute_function_gradient(f, x):
+def compute_function_gradient(f, x, e=1.0e-7):
     """Returns a numerical estimate of the gradient of
     function f at point x."""
 
-    e = 1.0e-4
     return (f(x + e) - f(x - e))/(2.0*e)
 
 
