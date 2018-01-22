@@ -1028,6 +1028,27 @@ def feed_forward(net, A, Z, theta):
             A[j][:,1:] = layer.act_func[0](Z[j])
 
 
+def back_prop(net, sigma, A, Z, theta, theta_grad, lambda_param):
+
+    m = A[0].shape[0]
+
+    # Iterate over the hidden layers to back-propagate
+    # the errors
+    for j in range(net.n_layers - 2, 0, -1):
+        sigma[j][:] = (
+                np.dot(sigma[j + 1], theta[j + 1][:,1:])*
+                net.layers[j].act_func[1](Z[j], A[j][:,1:])
+            )
+
+    # Calculate the deltas and gradients for each layer
+    for j, layer in enumerate(net.layers[1:], start=1):
+
+        theta_grad[j][:] = np.dot(sigma[j].T, A[j - 1])/m
+
+        # Add component for regularization
+        theta_grad[j][:, 1:] += lambda_param*theta[j][:, 1:]/m
+
+
 def initialize_arrays(net, m):
 
     # m is number of training data points
@@ -1299,24 +1320,8 @@ def cost_function_log(net, training_data, weights=None,
     assert net.layers[-1].act_func is activation_functions["sigmoid"]
     sigma[-1] = A[-1] - Y
 
-    # Iterate over the hidden layers to back-propagate
-    # the errors
-    for j in range(net.n_layers - 2, 0, -1):
-        sigma[j][:] = (
-                np.dot(sigma[j + 1], theta[j + 1][:,1:])*
-                net.layers[j].act_func[1](Z[j], A[j][:,1:])
-            )
-
-    # Calculate the deltas and gradients for each layer
-    for j, layer in enumerate(net.layers[1:], start=1):
-
-        # Don't really need this
-        #delta[j][:] = np.dot(sigma[j].T, A[j - 1])
-
-        theta_grad[j][:] = np.dot(sigma[j].T, A[j - 1])/m
-
-        # Add component for regularization
-        theta_grad[j][:, 1:] += lambda_param*theta[j][:, 1:]/m
+    # Back-propagate to calculate derivatives
+    back_prop(net, sigma, A, Z, theta, theta_grad, lambda_param)
 
     return (J, grad)
 
@@ -1402,31 +1407,15 @@ def cost_function_mse(net, training_data, weights=None,
 
     # Calculate dJ/dZ (sigma) for the output layer:
     # TODO: Change sigma to dZ for consistency with A Ng course
-    if net.layers[-1].act_func == (sigmoid, sigmoid_gradient):
+    if net.layers[-1].act_func is activation_functions["sigmoid"]:
         sigma[-1][:] = (A[-1] - Y)*A[-1]*(1 - A[-1])
-    elif net.layers[-1].act_func == (tanh, tanh_gradient):
+    elif net.layers[-1].act_func is activation_functions["tanh"]:
         sigma[-1][:] = (A[-1] - Y)*(1 - A[-1]**2)
     else:
         sigma[-1][:] = (A[-1] - Y)*net.layers[-1].act_func[1](Z[-1])
 
-    # Iterate over the hidden layers to back-propagate
-    # the errors
-    for j in range(net.n_layers - 2, 0, -1):
-        sigma[j][:] = (
-                np.dot(sigma[j + 1], theta[j + 1][:,1:])*
-                net.layers[j].act_func[1](Z[j], A[j][:,1:])
-            )
-
-    # Calculate the deltas and gradients for each layer
-    for j, layer in enumerate(net.layers[1:], start=1):
-
-        # Don't really need this
-        #delta[j][:] = np.dot(sigma[j].T, A[j - 1])
-
-        theta_grad[j][:] = np.dot(sigma[j].T, A[j - 1])/m
-
-        # Add component for regularization
-        theta_grad[j][:, 1:] += lambda_param*theta[j][:, 1:]/m
+    # Back-propagate to calculate derivatives
+    back_prop(net, sigma, A, Z, theta, theta_grad, lambda_param)
 
     return (J, grad)
 
