@@ -28,20 +28,16 @@ future
  - needed if running Python 2 for builtins such as input()
 
 TODO list:
-- Need to eliminate np.concatenate - taking 50% of time
-  Try instantiating the A[]'s with the 1.0 values in place
-  and then set the remaining values using an assignment
-  Better alternative: move to separate weights + biases
+- Upgrade cost functions so they can be run from network
+- Consider whether need to move to separate weights + biases
 - Consider making activation and gradient functions into named
   tuples instead of regular tuples - or not.
-- consider detaching cost_functions (log, mse) from the
-  MLPNetwork class
 - Break up common parts of cost_functions into sub-functions
 - find a way to connect the inputs of one network to the
   outputs of another (ideally using a name-object reference
   so no copying is required).
-- Consider whether to move train to a method of network (or
-  not).
+- Develop the Trainer class to manage all training
+- Allow for mini-batch updates in Trainer class training
 - Change training data subsets into a dictionary for easier
   retrieval
 - Remove MLP from class names (module name is sufficient)
@@ -797,358 +793,6 @@ class MLPNetwork(object):
 
         return diff
 
-    def cost_function_log(self, X, Y, weights=None, lambda_param=0.0, jac=True):
-        """
-        (J, grad) = cost_function_log(X, Y) computes the cost (J)
-        using the logistic cost function* and gradients (grad) of
-        the network using back-propagation for the given set of
-        training data (X, Y).
-
-        *Note: This cost function is also known as the Bernoulli
-        negative log-likelihood and binary cross-entropy.  It
-        should only be used for problems such as classification
-        where y values are either 0.0 or 1.0.
-
-        Arguments:
-        X -- a set of training data points containing m rows of
-               network input data
-        Y -- a set of desired network outputs for the training
-               data containing m rows of output data
-
-        Keyword arguments:
-        weights       -- Provide a new set of weights to calculate the cost
-                         function (current network weights will not be
-                         affected).  If not specified, the cost function will
-                         use the current weights stored in the network.
-        lambda_param  -- Regularization term.  If not specified then default
-                         is lambda_param=0.0 (i.e. no regularization).
-        jac           -- If set to None or False then this function does not
-                         calculate or return the Jacobian matrix (of gradients).
-        """
-
-        # Number of training data points
-        m = X.shape[0]
-
-        # Get the weights of each layer as a list of 2-dimensional arrays,
-        # either from the network or from the set of weights provided.
-        theta = self.get_theta(weights=weights)
-
-        # Prepare list variables for feed-forward computations
-        A = [None]*self.n_layers
-        Z = [None]*self.n_layers
-
-        # A[0] is the input matrix (network inputs from training data).
-        # Create it from a copy of the input data, X with a leading column
-        # of ones to simulate the bias terms.
-
-        # 20% of function time on this command:
-        A[0] = np.concatenate((np.ones((m, 1), dtype=np.float), X), axis=1)
-
-        # This is the same but not quite as fast:
-        #A[0] = np.ones((m, 1 + X.shape[1]), dtype=np.float)
-        #A[0][:,1:] = X
-
-        # 38% of function time in this loop:
-        for j, layer in enumerate(self.layers[1:], start=1):
-
-            # Calculate output values of current layer based on
-            # outputs of previous layer
-            Z[j] = np.dot(A[j - 1], theta[j].T)
-
-            # Apply the activation function to ouput values
-            # Note: only add the column of ones if it is a hidden
-            # layer
-            #TODO: Wouldn't it be better to instantiate the
-            # A[]'s with the 1.0 values in place and then
-            # set the remaining values using an assignment?
-            if j == self.n_layers - 1:
-                A[j] = layer.act_func[0](Z[j])
-            else:
-                A[j] = np.concatenate(
-                    (
-                        np.ones((m, 1), dtype=np.float),
-                        layer.act_func[0](Z[j])
-                    ),
-                    axis=1
-                )
-
-        # Cost function
-        # Negative log-likelihood of the Bernoulli distribution
-        # (vectorized)
-        # This only works with data sets where y = 0.0 or 1.0.
-        # 8% of function time in this loop:
-        try:
-            J = np.sum(-Y*np.log(A[-1]) - (1.0 - Y)*np.log(1.0 - A[-1]))/m
-        except FloatingPointError:
-            n_zeros = np.sum(np.any(A[-1] == 0.0))
-            n_ones = np.sum(np.any(A[-1] == 1.0))
-            messages = ["FloatingPointError occurred."]
-            if n_zeros > 0:
-                messages.append("%d network output values are 0.0." % n_zeros)
-            if n_ones > 0:
-                messages.append("%d network output values are 1.0." % n_ones)
-            raise ValueError( " ".join(messages))
-        # Note: numpy will only raise a warning or error if
-        # np.seterr(all='raise')
-        #
-        # %timeit returned 0.448 ms
-
-        # Add regularization terms
-        if lambda_param != 0.0:
-
-            for j, layer in enumerate(self.layers[1:], start=1):
-                J = J + lambda_param*np.sum(theta[j][:, 1:]**2)/(2.0*m)
-
-        # If jac is set to None or False then don't calculate
-        # the gradient
-        if not jac:
-            return J
-
-        # Otherwise, gradients will be returned in the array grad
-        # which has the same dimensions as weights
-        # 34% of function time in rest of function below here
-        grad = np.zeros(self.n_weights, dtype=np.float)
-
-        # sigma, delta and theta_grad arrays for each layer
-        # will be stored in lists
-
-        # Partial derivatives of error w.r.t. each weight
-        theta_grad = [None]*self.n_layers
-
-        # Now initialise gradient arrays
-        first = 0
-        previous = self.layers[0]
-        for j, layer in enumerate(self.layers[1:], start=1):
-            last = first + previous.n_outputs*(layer.n_outputs - 1)
-            if last > self.n_weights:
-                raise MLPError(
-                    "Error initialising indices of gradients arrays."
-                )
-
-            try:
-                theta_grad[j] = grad[first:last].reshape((layer.n_outputs \
-                                - 1, previous.n_outputs))
-            except:
-                raise MLPError(
-                    "Error re-shaping the array of gradients "
-                    " for layer" + str(j)
-                )
-
-            previous = layer
-            first = last
-
-        # Calculate dJ/dZ (sigma) for the output layer:
-        # TODO: Consider renaming sigma dZ for consistency with
-        # Andrew Ng's latest course material
-        sigma = [None]*self.n_layers
-
-        # For negative log-likelihood cost function and with
-        # the sigmoid function in the output layer, sigma is
-        # simply A - Y:
-        assert self.layers[-1].act_func is activation_functions["sigmoid"]
-        sigma[-1] = A[-1] - Y
-
-        # Iterate over the hidden layers to back-propagate
-        # the errors
-        for j in range(self.n_layers - 2, 0, -1):
-            sigma[j] = (
-                np.dot(sigma[j + 1], theta[j + 1]) *
-                    self.layers[j].act_func[1](
-                        np.concatenate(
-                            (
-                                np.ones((m, 1), dtype=np.float),
-                                Z[j]
-                            ),
-                            axis=1
-                        ),
-                        A[j] # 6.5 to 7.4% reduction in execution time
-                    )
-            )[:, 1:]
-
-        # Changes to each weight
-        delta = [None]*self.n_layers
-
-        # Calculate the deltas and gradients for each layer
-        for j, layer in enumerate(self.layers[1:], start=1):
-
-            delta[j] = np.dot(sigma[j].T, A[j - 1])
-
-            theta_grad[j][:] = (
-                delta[j] + lambda_param * np.concatenate(
-                        (
-                            np.zeros((theta[j].shape[0], 1), dtype=np.float),
-                            theta[j][:, 1:]
-                        ),
-                        axis=1
-                    )
-            )/m
-
-        return (J, grad)
-        # %timeit returned 5.40 ms
-
-    def cost_function_mse(self, X, Y, weights=None, lambda_param=0.0, jac=True):
-        """
-        (J, grad) = cost_function_mse(X, Y) computes the cost (J)
-        using the mean-squared-error function* and gradients (grad)
-        of the network using back-propagation for the given set of
-        training data (X, Y).
-
-        *Note: This cost function is also known as the maximum
-        likelihood or sum-squared error method.  It is generally
-        useful for regression and function approximation problems.
-
-        Arguments:
-        X -- a set of training data points containing m rows of
-               network input data
-        Y -- a set of desired network outputs for the training
-               data containing m rows of output data
-
-        Keyword arguments:
-        weights       -- Provide a new set of weights to calculate the cost
-                         function (current network weights will not be
-                         affected).  If not specified, the cost function will
-                         use the current weights stored in the network.
-        lambda_param  -- Regularization term.  If not specified then default
-                         is lambda_param=0.0 (i.e. no regularization).
-        jac           -- If set to None or False then this function does not
-                         calculate or return the Jacobian matrix (of gradients).
-        """
-
-        # Number of training data points
-        m = X.shape[0]
-
-        # Get the weights of each layer as a list of 2-dimensional arrays,
-        # either from the network or from the set of weights provided.
-        theta = self.get_theta(weights=weights)
-
-        # Prepare list variables for feed-forward computations
-        A = [None]*self.n_layers
-        Z = [None]*self.n_layers
-
-        # Set A[0] to the input matrix (network inputs from training
-        # data) with a column of ones to simulate the bias terms
-        A[0] = np.concatenate((np.ones((m, 1), dtype=np.float), X), axis=1)
-
-        for j, layer in enumerate(self.layers[1:], start=1):
-
-            # Calculate output values of current layer based on
-            # outputs of previous layer
-            Z[j] = np.dot(A[j - 1], theta[j].T)
-
-            # Apply the activation function to ouput values
-            # Note: only add the column of ones if it is a hidden
-            # layer
-            #TODO: Wouldn't it be better to instantiate the
-            # A[]'s with the 1.0 values in place and then
-            # set the remaining values using an assignment?
-            # (A speed test I did suggests it would)
-            if j == self.n_layers - 1:
-                A[j] = layer.act_func[0](Z[j])
-            else:
-                A[j] = np.concatenate(
-                    (
-                        np.ones((m, 1), dtype=np.float),
-                        layer.act_func[0](Z[j])
-                    ),
-                    axis=1
-                )
-
-        # Regular mean-squared-error (MSE) cost function
-        J = 0.5*np.sum((A[-1] - Y)**2)/m
-
-        # Add regularization terms
-        if lambda_param != 0.0:
-
-            for j, layer in enumerate(self.layers[1:], start=1):
-                J = J + lambda_param*np.sum(theta[j][:, 1:]**2)/(2.0*m)
-
-        # If jac is set to None or False then don't calculate
-        # the gradient
-        if not jac:
-            return J
-
-        # Otherwise, gradients will be returned in the array grad
-        # which has the same dimensions as weights
-        grad = np.zeros(self.n_weights, dtype=np.float)
-
-        # sigma, delta and theta_grad arrays for each layer
-        # will be stored in lists
-
-        # Partial derivatives of error w.r.t. each weight
-        theta_grad = [None]*self.n_layers
-
-        # Now initialise gradient arrays
-        first = 0
-        previous = self.layers[0]
-
-        for j, layer in enumerate(self.layers[1:], start=1):
-            last = first + previous.n_outputs*(layer.n_outputs - 1)
-            if last > self.n_weights:
-                raise MLPError(
-                    "Error initialising indices of gradients arrays."
-                )
-
-            try:
-                theta_grad[j] = grad[first:last].reshape((layer.n_outputs \
-                                - 1, previous.n_outputs))
-            except:
-                raise MLPError(
-                    "Error re-shaping the array of gradients "
-                    " for layer" + str(j)
-                )
-
-            previous = layer
-            first = last
-
-        # Errors at each node
-        sigma = [None]*self.n_layers
-
-        # Calculate dJ/dZ (sigma) for the output layer:
-        if self.layers[-1].act_func == (sigmoid, sigmoid_gradient):
-            sigma[-1] = (A[-1] - Y)*A[-1]*(1 - A[-1])
-        elif self.layers[-1].act_func == (tanh, tanh_gradient):
-            sigma[-1] = (A[-1] - Y)*(1 - A[-1]**2)
-        else:
-            sigma[-1] = (A[-1] - Y)*self.layers[-1].act_func[1](Z[-1])
-
-        # Iterate over the hidden layers to back-propagate
-        # the errors
-        for j in range(self.n_layers - 2, 0, -1):
-            sigma[j] = (
-                np.dot(sigma[j + 1], theta[j + 1]) *
-                    self.layers[j].act_func[1](
-                        np.concatenate(
-                            (
-                                np.ones((m, 1), dtype=np.float),
-                                Z[j]
-                            ),
-                            axis=1
-                        ),
-                        A[j] # Approx. 7% reduction in execution time
-                    )
-                )[:, 1:]
-
-        # Changes to each weight
-        delta = [None]*self.n_layers
-
-        # Calculate the deltas and gradients for each layer
-        for j, layer in enumerate(self.layers[1:], start=1):
-
-            delta[j] = np.dot(sigma[j].T, A[j - 1])
-
-            theta_grad[j][:] = (
-                delta[j] + lambda_param * np.concatenate(
-                        (
-                            np.zeros((theta[j].shape[0], 1), dtype=np.float),
-                            theta[j][:, 1:]
-                        ),
-                        axis=1
-                    )
-            )/m  # Don't need '*2' here because J above has '0.5*'
-
-        return (J, grad)
-        # %timeit returned 5.40 ms
-
 
 # ------------------ MLP TRAINING DATA CLASS ----------------------
 
@@ -1370,10 +1014,43 @@ def feed_forward(net, A, Z, theta):
         else:
             A[j][:,1:] = layer.act_func[0](Z[j])
 
-def train2(net, training_data, max_iter=1, update=True, disp=False,
+
+def train(net, training_data, max_iter=1, update=True, disp=False,
            method='L-BFGS-B', lambda_param=0.0, gtol=1e-6, ftol=0.01):
-    """Re-write of the train() function to eliminate unnecessary
-    re-creation of matrices and np.concenate operations."""
+    """*** TODO: This docstring needs updating ***
+
+    Trains a network (net) on a set of training data (data)
+    using the scipy.optimize.minimize function which will minimize
+    the a cost function (net.cost_function) by changing the weights
+    (net.weights).
+
+    Returns a scipy.optimize.OptimizeResult object. See the
+    scipy documentation for a description of its attributes.
+
+    Arguments:
+    net          -- MLPNetwork object.
+    data         -- MLPTrainingData object.
+
+    Keyword Arguments:
+    max_iter     -- Maximum number of iterations of the solver
+    update       -- Set to False if you don't want to update the
+                    network's weights at the end of the training.
+                    Default is True.
+    disp         -- Set to True if you want the minimize function
+                    to print convergence progress messages during
+                    the training.
+    method       -- Select the solver to use.  It must be a solver
+                    that uses a Jacobian matrix (of gradients).
+                    Default is 'L-BFGS-B'.
+    lambda_param -- Regularization parameter.  Default is 0.0.
+    gtol         -- This is a parameter specific to the 'L-BFGS-B'
+                    solver.  The iteration will stop when the
+                    maximum gradient is <= gtol.  Default is 1e-6.
+    ftol         -- This is a parameter specific to the 'L-BFGS-B'
+                    solver.  The iteration will stop when the cost
+                    function is <= to ftol.  Default is 0.01.
+    """
+
 
     X, Y = training_data.inputs, training_data.outputs
 
@@ -1706,71 +1383,6 @@ def cost_function_mse(net, training_data, A, Z, grad, sigma, theta_grad,
         theta_grad[j][:, 1:] += lambda_param*theta[j][:, 1:]/m
 
     return (J, grad)
-
-
-def train(net, data, max_iter=1, update=True, disp=False, method='L-BFGS-B',
-          lambda_param=0.0, gtol=1e-6, ftol=0.01):
-    """Trains a network (net) on a set of training data (data)
-    using the scipy.optimize.minimize function which will minimize
-    the a cost function (net.cost_function) by changing the weights
-    (net.weights).
-
-    Returns a scipy.optimize.OptimizeResult object. See the
-    scipy documentation for a description of its attributes.
-
-    Arguments:
-    net          -- MLPNetwork object.
-    data         -- MLPTrainingData object.
-
-    Keyword Arguments:
-    max_iter     -- Maximum number of iterations of the solver
-    update       -- Set to False if you don't want to update the
-                    network's weights at the end of the training.
-                    Default is True.
-    disp         -- Set to True if you want the minimize function
-                    to print convergence progress messages during
-                    the training.
-    method       -- Select the solver to use.  It must be a solver
-                    that uses a Jacobian matrix (of gradients).
-                    Default is 'L-BFGS-B'.
-    lambda_param -- Regularization parameter.  Default is 0.0.
-    gtol         -- This is a parameter specific to the 'L-BFGS-B'
-                    solver.  The iteration will stop when the
-                    maximum gradient is <= gtol.  Default is 1e-6.
-    ftol         -- This is a parameter specific to the 'L-BFGS-B'
-                    solver.  The iteration will stop when the cost
-                    function is <= to ftol.  Default is 0.01.
-    """
-
-    cost_func = partial(
-        net.cost_function,
-        data.inputs,
-        data.outputs,
-        jac=True,
-        lambda_param=lambda_param
-    )
-
-    res = minimize(
-        cost_func,
-        net.weights,
-        method=method,
-        jac=True,
-        options={
-            'gtol': gtol,
-            'ftol': ftol * np.finfo(float).eps,
-            'disp': disp,
-            'maxiter': max_iter
-        }
-    )
-    # Other options:
-    # - CG, BFGS, Newton-CG, L-BFGS-B, TNC, SLSQP, dogleg, trust-ncg
-
-    if update:
-        net.weights[:] = res.x
-
-    print("Solver returned the following message:\n%s" % str(res.message))
-
-    return res
 
 
 # THE FOLLOWING FUNCTION IS ONLY FOR TESTING!
@@ -2134,13 +1746,13 @@ def main():
 
     lambda_param = 0.7
 
-    (J, grad) = xor.cost_function(
-        training_set.inputs,
-        training_set.outputs,
-        lambda_param=lambda_param
-    )
+    #(J, grad) = xor.cost_function(
+    #    training_set.inputs,
+    #    training_set.outputs,
+    #    lambda_param=lambda_param
+    #)
 
-    print("Initial error:", J)
+    #print("Initial error:", J)
 
     print("\nCheck gradient functions of activation functions...")
 
@@ -2160,7 +1772,6 @@ def main():
     input("Program paused. Press enter to continue.")
 
     print("Begin training...")
-
 
     res = train(xor, training_set, max_iter=1000, lambda_param=lambda_param, disp=True)
 
