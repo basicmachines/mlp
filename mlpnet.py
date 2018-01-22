@@ -29,19 +29,22 @@ future
 
 TODO list:
 - Upgrade cost functions so they can be run from network
-- Consider whether need to move to separate weights + biases
-- Consider making activation and gradient functions into named
-  tuples instead of regular tuples - or not.
 - Break up common parts of cost_functions into sub-functions
 - find a way to connect the inputs of one network to the
   outputs of another (ideally using a name-object reference
   so no copying is required).
 - Develop the Trainer class to manage all training
+- Consider adding 1.0s to training data inputs to speed up
+  training
+- Consider whether need to move to separate weights + biases
+- Consider making activation and gradient functions into named
+  tuples instead of regular tuples - or not.
 - Allow for mini-batch updates in Trainer class training
 - Change training data subsets into a dictionary for easier
   retrieval
 - Remove MLP from class names (module name is sufficient)
 - Create a classifier class that inherits from MLPNetwork
+- Check lambda parameter is correct - /m /2m etc.
 - Add Softmax function
 """
 
@@ -707,14 +710,14 @@ class MLPNetwork(object):
         except AttributeError:
             pass
 
-        if self.cost_function == cost_function_log:
-            cost_function = 'log'
-        elif self.cost_function == cost_function_mse:
-            cost_function = 'mse'
+        if self.cost_function is cost_function_log:
+            cost_function_name = 'log'
+        elif self.cost_function is cost_function_mse:
+            cost_function_name = 'mse'
         else:
             raise MLPError("Unrecognised cost function assigned to network.")
 
-        s.append("cost_function=%s" % cost_function.__repr__())
+        s.append("cost_function=%s" % cost_function_name.__repr__())
 
         return "MLPNetwork(" + ", ".join(s) + ")"
 
@@ -725,7 +728,7 @@ class MLPNetwork(object):
             self.name.__repr__(), self.dimensions.__repr__()
         )
 
-    def check_gradients(self, X, y, weights=None, lambda_param=0.0,
+    def check_gradients(self, training_data, weights=None, lambda_param=0.0,
                         messages=True):
         """check_gradients uses a numerical approximation to
             check the gradients calculated by the backpropagation
@@ -741,13 +744,19 @@ class MLPNetwork(object):
         if weights is None:
             weights = self.weights
 
+        m = training_data.inputs.shape[0]
+
+        arrays = initialize_arrays(self, m)
+
         # Define a cost function
         def cost_func(p):
             return self.cost_function(
-                X, y,
+                self,
+                training_data,
                 weights=p,
+                lambda_param=lambda_param,
                 jac=True,
-                lambda_param=lambda_param
+                cache=arrays
             )
 
         # Could use a partial function or lambda function instead
@@ -762,34 +771,38 @@ class MLPNetwork(object):
         #                  hidden_layer_size, num_labels, X, y, lambda_param)
 
         # cost_func returns a tuple (cost, grad)
-        cost = cost_func(weights)
+        cost, grad = cost_func(weights)
 
         numgrad = compute_derivative_numerically(cost_func, weights)
 
         # Visually examine the two gradient computations.  The two
         # columns you get should be very similar.
-        for (c1, c2) in zip(numgrad, cost[1]):
-            if messages:
-                print(c1, c2)
-        if messages:
-            print('The above two columns you get should be very similar.\n' +
-              '(Left-Numerical Gradient, Right-Analytical Gradient)\n\n')
 
-        if (numgrad - cost[1]).sum() == 0.0:
-            diff = 0
+        if messages:
+            print('Comparison of numerical estimate (Left) with analytical (Right)\n')
+            print_list(zip(numgrad, grad))
+            print('The above two columns should be very similar.\n')
+
+        diffs = numgrad - grad
+        if diffs.sum() == 0.0:
+            diff = 0.0
         else:
             # Evaluate the norm of the difference between two solutions.
             # If you have a correct implementation, and assuming you used
             # EPSILON = 0.0001 in compute_derivative_numerically, then diff
             # below should be less than 1e-9
-            diff = np.linalg.norm((numgrad - cost[1]), ord=2) / \
-                np.linalg.norm((numgrad + cost[1]), ord=2)
+            diff = np.linalg.norm(diffs, ord=2) / \
+               (np.linalg.norm(numgrad, ord=2) + np.linalg.norm(grad, ord=2))
 
         if messages:
             print("If the backpropagation implementation is correct\n" +
                   "then the relative difference will be small (less\n" +
-                  "than 1e-9).\n")
+                  "than 1e-7).\n")
             print("Relative Difference: %g\n" % diff)
+
+            biggest = np.argmax(diffs)
+            print("Parameter with greatest difference: %s\n" % biggest)
+            print(numgrad[biggest], grad[biggest])
 
         return diff
 
@@ -1015,6 +1028,86 @@ def feed_forward(net, A, Z, theta):
             A[j][:,1:] = layer.act_func[0](Z[j])
 
 
+def initialize_arrays(net, m):
+
+    # m is number of training data points
+
+    # Set-up matrices needed for vectorized training
+
+    # Prepare list variables for feed-forward computations
+    A = [None]*net.n_layers
+    Z = [None]*net.n_layers
+
+    # Make each A with a column of ones to simulate the
+    # bias terms
+    for j, layer in enumerate(net.layers):
+
+        # Prepare matrices for output values:
+        if j > 0:
+            Z[j] = np.empty((m, layer.n_nodes))
+
+        # Prepare matrices for A:
+        if j == net.n_layers - 1:
+            A[j] = np.empty((m, layer.n_nodes))
+        else:
+            A[j] = np.concatenate(
+                (
+                    np.ones((m, 1), dtype=np.float),
+                    np.empty((m, layer.n_nodes))
+                ),
+                axis=1
+            )
+
+    # Prepare array for gradients with the same
+    # dimensions as weights
+    grad = np.zeros(net.n_weights, dtype=np.float)
+
+    # Partial derivatives of error w.r.t. each weight
+    theta_grad = [None]*net.n_layers
+
+    # Changes to each weight
+    # TODO: Don't really need this cache
+    #delta = [None]*net.n_layers
+
+    # Now initialise gradient and delta arrays
+    first = 0
+    previous = net.layers[0]
+
+    for j, layer in enumerate(net.layers[1:], start=1):
+        last = first + previous.n_outputs*(layer.n_outputs - 1)
+        if last > net.n_weights:
+            raise MLPError(
+                "Error initialising indices of gradients arrays."
+            )
+
+        try:
+            theta_grad[j] = grad[first:last].reshape((layer.n_outputs \
+                            - 1, previous.n_outputs))
+        except:
+            raise MLPError(
+                "Error re-shaping the array of gradients "
+                " for layer" + str(j)
+            )
+
+        previous = layer
+        first = last
+
+    # Errors at each node
+    sigma = [None]*net.n_layers
+
+    for j in range(net.n_layers - 1, 0, -1):
+        sigma[j] = np.empty((m, net.layers[j].n_nodes))
+
+    return {
+        'A': A,
+        'Z': Z,
+        'sigma': sigma,
+        'grad': grad,
+        'theta_grad': theta_grad
+    }
+
+
+
 def train(net, training_data, max_iter=1, update=True, disp=False,
            method='L-BFGS-B', lambda_param=0.0, gtol=1e-6, ftol=0.01):
     """*** TODO: This docstring needs updating ***
@@ -1051,98 +1144,25 @@ def train(net, training_data, max_iter=1, update=True, disp=False,
                     function is <= to ftol.  Default is 0.01.
     """
 
-
     X, Y = training_data.inputs, training_data.outputs
-
-    # Set-up matrices needed for vectorized training
 
     # Number of training data points
     m = X.shape[0]
 
-    # Get the weights of each layer as a list of 2-dimensional arrays,
-    # from the network.
-    theta = net.get_theta()
+    # Prepare all arrays (empty)
+    # A, Z, sigma, grad, theta_grad
+    arrays = initialize_arrays(net, m)
 
-    # Prepare list variables for feed-forward computations
-    A = [None]*net.n_layers
-    Z = [None]*net.n_layers
-
-    # Make A[0] from a copy of the input values (network inputs
-    # from training data) with a column of ones to simulate the
-    # bias terms
-    A[0] = np.concatenate((np.ones((m, 1), dtype=np.float), X), axis=1)
-
-    for j, layer in enumerate(net.layers[1:], start=1):
-        # Prepare matrices for output values:
-        Z[j] = np.empty((m, layer.n_nodes))
-        #np.dot(A[j - 1], theta[j].T)
-
-        # Prepare matrices for A:
-        if j == net.n_layers - 1:
-            A[j] = np.empty(Z[j].shape)
-        else:
-            A[j] = np.concatenate(
-                (
-                    np.ones((m, 1), dtype=np.float),
-                    np.empty(Z[j].shape)
-                ),
-                axis=1
-            )
-
-    # Prepare array for gradients with the same
-    # dimensions as weights
-    grad = np.zeros(net.n_weights, dtype=np.float)
-
-    # Partial derivatives of error w.r.t. each weight
-    theta_grad = [None]*net.n_layers
-
-    # Changes to each weight
-    # TODO: Don't really need this cache
-    #delta = [None]*net.n_layers
-
-    # Now initialise gradient and delta arrays
-    first = 0
-    previous = net.layers[0]
-
-    for j, layer in enumerate(net.layers[1:], start=1):
-        last = first + previous.n_outputs*(layer.n_outputs - 1)
-        if last > net.n_weights:
-            raise MLPError(
-                "Error initialising indices of gradients arrays."
-            )
-
-        try:
-            theta_grad[j] = grad[first:last].reshape((layer.n_outputs \
-                            - 1, previous.n_outputs))
-        except:
-            raise MLPError(
-                "Error re-shaping the array of gradients "
-                " for layer" + str(j)
-            )
-
-        # TODO: Don't really need this cache
-        #delta[j] = np.empty(theta_grad[j].shape)
-
-        previous = layer
-        first = last
-
-    # Errors at each node
-    sigma = [None]*net.n_layers
-
-    for j in range(net.n_layers - 1, 0, -1):
-        sigma[j] = np.empty((m, net.layers[j].n_nodes))
+    # Assign training data inputs to A[0]
+    arrays['A'][0][:, 1:] = X
 
     cost_func = partial(
         net.cost_function,
         net,
         training_data,
-        A,
-        Z,
-        grad,
-        sigma,
-        theta_grad,
         lambda_param=lambda_param,
-        jac=True
+        jac=True,
+        cache=arrays
     )
 
     #cost_func = partial(
@@ -1176,8 +1196,8 @@ def train(net, training_data, max_iter=1, update=True, disp=False,
     return res
 
 
-def cost_function_log(net, training_data, A, Z, grad, sigma, theta_grad,
-                      weights=None, lambda_param=0.0, jac=True):
+def cost_function_log(net, training_data, weights=None,
+                      lambda_param=0.0, jac=True, cache=None):
     """
     *** TODO: This docstring needs updating ***
 
@@ -1207,18 +1227,32 @@ def cost_function_log(net, training_data, A, Z, grad, sigma, theta_grad,
     jac           -- If set to None or False then this function does not
                      calculate or return the Jacobian matrix (of gradients).
     """
+
+    # Inputs and desired outputs from training data
+    X, Y = training_data.inputs, training_data.outputs
+
+    # Number of examples in training data set
+    m = Y.shape[0]
+
+    if cache is None:
+        # initialize all arrays as new (empty) arrays
+        cache = initialize_arrays(net, m)
+
+        # Assign training data inputs to A[0]
+        cache['A'][0][:, 1:] = X
+
+    A = cache['A']
+    Z = cache['Z']
+    sigma =  cache['sigma']
+    grad = cache['grad']
+    theta_grad = cache['theta_grad']
+
     # Get the weights of each layer as a list of 2-dimensional arrays,
     # either from the network or from the set of weights provided.
     theta = net.get_theta(weights=weights)
 
     # Calculate A and Z
     feed_forward(net, A, Z, theta)
-
-    # Desired outputs from training data
-    Y = training_data.outputs
-
-    # Number of examples in training data set
-    m = Y.shape[0]
 
     # Cost function
     # Negative log-likelihood of the Bernoulli distribution
@@ -1287,9 +1321,8 @@ def cost_function_log(net, training_data, A, Z, grad, sigma, theta_grad,
     return (J, grad)
 
 
-
-def cost_function_mse(net, training_data, A, Z, grad, sigma, theta_grad,
-                      weights=None, lambda_param=0.0, jac=True):
+def cost_function_mse(net, training_data, weights=None,
+                      lambda_param=0.0, jac=True, cache=None):
     """
     *** TODO: This docstring needs updating ***
 
@@ -1319,18 +1352,31 @@ def cost_function_mse(net, training_data, A, Z, grad, sigma, theta_grad,
                      calculate or return the Jacobian matrix (of gradients).
     """
 
+    # Inputs and desired outputs from training data
+    X, Y = training_data.inputs, training_data.outputs
+
+    # Number of examples in training data set
+    m = Y.shape[0]
+
+    if cache is None:
+        # initialize all arrays as new (empty) arrays
+        cache = initialize_arrays(net, m)
+
+        # Assign training data inputs to A[0]
+        cache['A'][0][:, 1:] = X
+
+    A = cache['A']
+    Z = cache['Z']
+    sigma =  cache['sigma']
+    grad = cache['grad']
+    theta_grad = cache['theta_grad']
+
     # Get the weights of each layer as a list of 2-dimensional arrays,
     # either from the network or from the set of weights provided.
     theta = net.get_theta(weights=weights)
 
     # Calculate A and Z
     feed_forward(net, A, Z, theta)
-
-    # Desired outputs from training data
-    Y = training_data.outputs
-
-    # Number of examples in training data set
-    m = Y.shape[0]
 
     # Regular mean-squared-error (MSE) cost function
     J = 0.5*np.sum((A[-1] - Y)**2)/m
@@ -1437,6 +1483,9 @@ def top_ranked(sequence, reverse=True):
     freq_dist = frequency_distribution(sequence)
     return sorted(freq_dist.items(), key=(lambda x: x[1]), reverse=reverse)
 
+def print_list(x):
+    print("\n".join([str(i) for i in x]))
+
 def xor_test(n=10, max_iter=100):
 
     # Training data should create a smooth surface
@@ -1465,11 +1514,14 @@ def xor_test(n=10, max_iter=100):
     train_record = []
 
     for i in range(n):
+
         ndim = [2]
         for i in range(np.random.randint(1, 3)):
             ndim.append(np.random.randint(2, 10))
         ndim.append(1)
+
         xor = MLPNetwork(ndim=ndim, cost_function="mse")
+
         xor.initialize_weights()
         act_func_names = []
         act_funcs = []
@@ -1477,16 +1529,24 @@ def xor_test(n=10, max_iter=100):
             name = random_act_func()
             act_func_names.append(name)
             act_funcs.append(activation_functions[name])
+
+        # Try negative log-likelihood cost function
+        if np.random.random() < 0.25:
+            xor.cost_function = cost_function_log
+            name = "sigmoid"
+            act_func_names[-1] = name
+            act_funcs[-1] = activation_functions[name]
+
         set_act_funcs(xor, act_funcs)
 
         print("\nDimensions: %s" % str(ndim))
         print("Activation functions: %s" % str(act_func_names))
+        print("Cost function: %s" % str(xor.cost_function))
 
-        lambda_param = np.random.choice([0.0, 0.01, 0.1, 0.5, 0.8])
+        lambda_param = np.random.choice([0.0, 0.01, 0.1, 0.5, 0.8, 1.0])
         print("lambda: %f" % lambda_param)
 
-        error = xor.check_gradients(training_data.inputs,
-                                 training_data.outputs,
+        error = xor.check_gradients(training_data,
                                  lambda_param=lambda_param,
                                  messages=False)
 
@@ -1494,48 +1554,55 @@ def xor_test(n=10, max_iter=100):
 
         # TODO: Training errors around 1.0e-7 occuring with ReLU
         # function - how to avoid?
-        if np.isnan(error) or error > 1.0e-6:
-            raise ValueError("Calculation error occurred.")
+        if np.isnan(error) or error > 2.0e-6:
+            print("\nWARNING: Higher than expected error when checking gradients.")
+            print("Re-running gradient check with details...")
+            error = xor.check_gradients(training_data,
+                                 lambda_param=lambda_param,
+                                 messages=True)
+            input("\nPress enter to continue.\n")
 
         n_iter = np.random.choice(max_iter_choices)
-        train2(xor, training_data, max_iter=n_iter)
-        cost, grad = xor.cost_function(training_data.inputs,
-                                       training_data.outputs)
+        train(xor, training_data, max_iter=n_iter)
+        cost, grad = xor.cost_function(xor, training_data)
+
         print("Cost after training: %7.5f" % cost)
 
         success = True if cost < 0.01 else False
 
         train_record.append((success, tuple(ndim), tuple(act_func_names), lambda_param))
 
+    n_successes = sum((item[0] for item in train_record))
     print("\nSummary: %d out of %d tests successful after %d-%d iterations." % \
             (
-                sum((item[0] for item in train_record)),
+                n_successes,
                 n,
                 max_iter_choices[0],
                 max_iter_choices[-1]
             ))
 
-    print("\nFeatures of most successful networks")
-    print("Number of layers:")
-    results = [(len(item[1]) - 1) for item in train_record if item[0] is True]
-    print("\n".join([("%d: %d" % item) for item in top_ranked(results)[0:5]]))
-    n_layers_best = top_ranked(results)[0][0]
+    if n_successes > 0:
+        print("\nFeatures of most successful networks")
+        print("Number of layers:")
+        results = [(len(item[1]) - 1) for item in train_record if item[0] is True]
+        print_list([("%d: %d" % item) for item in top_ranked(results)[0:5]])
+        n_layers_best = top_ranked(results)[0][0]
 
-    print("\nTotal number of neurons:")
-    results = [sum(item[1][1:]) for item in train_record if item[0] is True]
-    print("\n".join([("%d: %d" % item) for item in top_ranked(results)[0:5]]))
+        print("\nTotal number of neurons:")
+        results = [sum(item[1][1:]) for item in train_record if item[0] is True]
+        print_list([("%d: %d" % item) for item in top_ranked(results)[0:5]])
 
-    print("\nOutput layer act_func:")
-    results = [item[2][-1] for item in train_record if item[0] is True]
-    print("\n".join([("%s: %d" % item) for item in top_ranked(results)[0:5]]))
+        print("\nOutput layer act_func:")
+        results = [item[2][-1] for item in train_record if item[0] is True]
+        print_list([("%s: %d" % item) for item in top_ranked(results)[0:5]])
 
-    print("\nAct_func combination (%d layers):" % n_layers_best)
-    results = [item[2] for item in train_record if item[0] is True and (len(item[1]) - 1) == n_layers_best]
-    print("\n".join([("%s: %d" % item) for item in top_ranked(results)[0:5]]))
+        print("\nAct_func combination (%d layers):" % n_layers_best)
+        results = [item[2] for item in train_record if item[0] is True and (len(item[1]) - 1) == n_layers_best]
+        print_list([("%s: %d" % item) for item in top_ranked(results)[0:5]])
 
-    print("\nLambda:")
-    results = [item[3] for item in train_record if item[0] is True]
-    print("\n".join([("%s: %d" % item) for item in top_ranked(results)[0:5]]))
+        print("\nLambda:")
+        results = [item[3] for item in train_record if item[0] is True]
+        print_list([("%s: %d" % item) for item in top_ranked(results)[0:5]])
 
 def check_gradients(lambda_param=0.0):
     """check_gradients Creates a small neural network to check the
@@ -1558,6 +1625,7 @@ def check_gradients(lambda_param=0.0):
 
     # Initialise the MLP test network for the system model
     ndim = [input_layer_size, hidden_layer_size, num_labels]
+
     test_model = MLPNetwork(
         ndim,
         name="Test model",
@@ -1610,8 +1678,9 @@ def check_gradients(lambda_param=0.0):
     # If you have a correct implementation, and assuming you used
     # EPSILON = 0.0001 in compute_derivative_numerically, then diff
     # below should be less than 1e-9
+    # TODO: I think this is wrong. Should be extra np.linalg in denominator
     diff = np.linalg.norm((numgrad - cost[1]), ord=2) / \
-        np.linalg.norm((numgrad + cost[1]), ord=2)
+           np.linalg.norm((numgrad + cost[1]), ord=2)
 
     print('If your backpropagation implementation is correct, then \n' + \
           'the relative difference will be small (less than 1e-9). \n' + \
@@ -1709,7 +1778,7 @@ def main():
     print("\n-------- Demonstration of MLP Network --------")
     print("\nDemo: XOR logic")
 
-    training_data = (
+    data = (
         (0.0, 0.0, 0.0),
         (0.0, 1.0, 1.0),
         (1.0, 0.0, 1.0),
@@ -1725,7 +1794,7 @@ def main():
     xor = MLPNetwork(
         ndim,
         name="XOR",
-        act_funcs=[(tanh, tanh_gradient), (sigmoid, sigmoid_gradient)],
+        act_funcs=["sigmoid", "sigmoid"],
         cost_function='log'
     )
 
@@ -1733,22 +1802,22 @@ def main():
     #xor = MLPNetwork(
     #    ndim,
     #    name="XOR",
-    #    act_funcs=[(tanh, tanh_gradient), (tanh, tanh_gradient)],
+    #    act_funcs=["tanh", "tanh"],
     #    cost_function='mse'
     #)
 
-    print(xor, "created")
+    print(str(xor) + "created")
 
     print("Randomly initialize weights...")
     xor.initialize_weights()
 
-    training_set = MLPTrainingData(ndim=xor.dimensions, data=training_data)
+    training_data = MLPTrainingData(ndim=xor.dimensions, data=data)
 
-    lambda_param = 0.7
+    lambda_param = 0.01
 
     #(J, grad) = xor.cost_function(
-    #    training_set.inputs,
-    #    training_set.outputs,
+    #    training_data.inputs,
+    #    training_data.outputs,
     #    lambda_param=lambda_param
     #)
 
@@ -1764,8 +1833,7 @@ def main():
     input("Program paused. Press enter to continue.")
 
     xor.check_gradients(
-        training_set.inputs,
-        training_set.outputs,
+        training_data,
         lambda_param=lambda_param
     )
 
@@ -1773,7 +1841,7 @@ def main():
 
     print("Begin training...")
 
-    res = train(xor, training_set, max_iter=1000, lambda_param=lambda_param, disp=True)
+    res = train(xor, training_data, max_iter=1000, lambda_param=lambda_param, disp=True)
 
     print("Error after learning:", res.fun)
 
@@ -1783,8 +1851,8 @@ def main():
     print(np.array_str(
         np.concatenate(
             (
-                xor.predict(training_set.inputs),
-                training_set.outputs
+                xor.predict(training_data.inputs),
+                training_data.outputs
             ),
             axis=1
         )
