@@ -1,5 +1,5 @@
 # mlpnet.py
-Python implementation of feed-forward multi-layer perceptron (MLP) neural networks using numpy and scipy based on theory taught by Andrew Ng on coursera.org and the Octave code examples from this course.
+Python implementation of feed-forward multi-layer perceptron (MLP) neural networks using numpy and scipy based on theory taught by Andrew Ng on coursera.org and adapted from the Octave code examples from this course as well as updates from the 2017 deeplearning.ai Deep Learning Specialization course..
 
 This is still a work-in-progress.  Still some bugs and fixes to do so don't recommend using this yet...
 
@@ -9,7 +9,6 @@ This is still a work-in-progress.  Still some bugs and fixes to do so don't reco
 - Prediction
 - Model Predictive Control (MPC)
 - Approximation of non-linear functions
-
 
 ## Main Classes
 
