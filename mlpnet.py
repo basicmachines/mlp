@@ -931,8 +931,9 @@ class MLPTrainingData(object):
                 self.mu = np.mean(self.inputs, axis=0)
                 self.sigma = np.std(self.inputs, axis=0)
 
+                # Check if already normalized
                 if np.isclose(self.mu.sum(), 0.0) & \
-                        np.all(np.isclose(self.sigma, 0.25)):
+                        np.all(np.isclose(self.sigma, 1.0)):
                     raise ValueError("Training data is already normalized."
                                      "Check that original data has not been"
                                      "over-written.")
