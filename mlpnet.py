@@ -28,6 +28,8 @@ future
  - needed if running Python 2 for builtins such as input()
 
 TODO list:
+- Find out how many times get_theta is running and consider
+  doing once only at network initialization
 - Documentation of cost_functions (log, mse) needs updating
 - Also train()
 - find a way to connect the inputs of one network to the
@@ -867,7 +869,7 @@ class MLPTrainingData(object):
 
             if len(self.data.shape) != 2:
                 raise ValueError("Training data must be a 2-dimensional "
-                               "array or nested sequence.")
+                                 "array or nested sequence.")
 
             if self.data.shape[1] != (self.n_in + self.n_out):
                 raise ValueError(
@@ -929,8 +931,14 @@ class MLPTrainingData(object):
                 self.mu = np.mean(self.inputs, axis=0)
                 self.sigma = np.std(self.inputs, axis=0)
 
+                if np.isclose(self.mu.sum(), 0.0) & \
+                        np.all(np.isclose(self.sigma, 0.25)):
+                    raise ValueError("Training data is already normalized."
+                                     "Check that original data has not been"
+                                     "over-written.")
+
                 # Normalise the training data
-                self.inputs[:] = (self.inputs - self.mu)*0.25/self.sigma
+                self.inputs[:] = (self.inputs - self.mu)/self.sigma
 
     def split(self, ratios=(0.75, 0.25), names=('Training set', 'Validation set'), shuffle=True):
         """Split training data points into a number of sub-sets
@@ -1021,8 +1029,8 @@ def feed_forward(net, A, Z, theta):
         Z[j][:] = np.dot(A[j - 1], theta[j].T)
 
         # Apply the activation function to ouput values
-        # Note: only add the column of ones if it is a hidden
-        # layer
+        # Note: A has a column of ones if it is a hidden
+        # layer activation
         if j == net.n_layers - 1:
             A[j][:] = layer.act_func[0](Z[j])
         else:
