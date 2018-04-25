@@ -5,14 +5,14 @@
 Revision date: 2018-04-25
 
 This Python module provides classes to simulate Multi-Layer
-Perceptron (MLP) neural networks for machine learning
-applications. It is an efficient vectorized implementation
-using numpy arrays and scipy optimization algorithms.
+Perceptron (MLP) neural networks for machine learning applications.
+It is an efficient vectorized implementation using numpy arrays and
+scipy optimization algorithms.
 
-Based on theory taught by Andrew Ng on coursera.org
-and adapted from the Octave code examples from this course
-as well as updates from the 2017 deeplearning.ai Neural
-etworks and Deep Learning course.
+Based on theory taught by Andrew Ng on coursera.org and adapted
+from the Octave code examples from this course as well as updates
+from the 2017 deeplearning.ai Neural Networks and Deep Learning
+specialization course.
 
 Python modules required to run this module:
 
@@ -28,8 +28,8 @@ future
  - needed if running Python 2 for builtins such as input()
 
 TODO list:
-- Find out how many times get_theta is running and consider
-  doing once only at network initialization
+- Find out how many times get_theta is running and consider doing
+  once only at network initialization
 - Check array caching is working in train()
 - Find a way to connect the inputs of one network to the
   outputs of another (ideally using a name-object reference
@@ -46,8 +46,10 @@ TODO list:
 - Remove MLP from class names (module name is sufficient)
 - Create a classifier class that inherits from MLPNetwork
 - Check lambda parameter is correct - /m /2m etc.
-- Add Softmax function
+- Add Softmax function, maybe add ELU (exponential linear unit)
 - Improve __repr__ function to show act func names only.
+- Maybe implement mini-batch training.
+- Maybe implement momentum or Adam.
 """
 
 from functools import partial
@@ -722,11 +724,30 @@ class MLPNetwork(object):
         self.weights[:] = weights
 
     def get_act_funcs(self):
-        """Return a list of the activation functions from each
-        layer (excluding the input layer).
+        """Return a list of the activation functions from each layer
+        (excluding the input layer).
         """
 
         return [layer.act_func for layer in self.layers[1:]]
+
+    def get_act_func_names(self):
+        """Return a list of the activation function names. For
+        example:
+
+        ['sigmoid', 'linear']
+        """
+
+        functions = list(activation_functions.values())
+        names = list(activation_functions.keys())
+        act_funcs = self.get_act_funcs()
+        # doesn't check gradient functions
+
+        if all([x == act_funcs[0] for x in act_funcs[1:]]):
+            act_func_names = [names[functions.index(act_funcs[0])]]
+        else:
+            act_func_names = [names[functions.index(f)] for f in act_funcs]
+
+        return act_func_names
 
     def __repr__(self):
 
@@ -735,13 +756,11 @@ class MLPNetwork(object):
 
         s.append("ndim=%s" % self.dimensions.__repr__())
 
-        act_funcs = self.get_act_funcs()
-        if self.n_neurons > 0:
-            if all([x == act_funcs[0] for x in act_funcs]):
-                if act_funcs[0] != default_act_func:
-                    s.append("act_funcs=%s" % act_funcs[0].__repr__())
-            else:
-                s.append("act_funcs=%s" % act_funcs.__repr__())
+        act_func_names = self.get_act_func_names()
+        if len(act_func_names) == 1:
+            s.append("act_funcs=%s" % act_func_names[0].__repr__())
+        else:
+            s.append("act_funcs=%s" % act_func_names.__repr__())
 
         try:
             if self.name is not None:
@@ -819,7 +838,8 @@ class MLPNetwork(object):
         # columns you get should be very similar.
 
         if messages:
-            print('Comparison of numerical estimate (Left) with analytical (Right)\n')
+            print("Comparison of numerical estimate (Left) with analytical"
+                  " (Right)\n")
             print_list(zip(numgrad, grad))
             print('The above two columns should be very similar.\n')
 
@@ -1182,11 +1202,10 @@ def initialize_arrays(net, m):
     }
 
 def train(net, training_data, max_iter=1, update=True, disp=False,
-           method='L-BFGS-B', lambda_param=0.0,
-           gtol=1e-6, ftol=0.01):
+          method='L-BFGS-B', lambda_param=0.0, gtol=1e-6, ftol=0.01):
     """Trains a network (net) on a set of training data (data) using
     the scipy.optimize.minimize function which will minimize
-    the a cost function (net.cost_function) by changing the weights
+    the cost function (net.cost_function) by changing the weights
     (net.weights).
 
     Returns a scipy.optimize.OptimizeResult object. See the scipy
