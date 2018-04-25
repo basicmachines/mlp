@@ -30,9 +30,8 @@ future
 TODO list:
 - Find out how many times get_theta is running and consider
   doing once only at network initialization
-- Documentation of cost_functions (log, mse) needs updating
-- Also train()
-- find a way to connect the inputs of one network to the
+- Check array caching is working in train()
+- Find a way to connect the inputs of one network to the
   outputs of another (ideally using a name-object reference
   so no copying is required).
 - Develop the Trainer class to manage all training
@@ -48,6 +47,7 @@ TODO list:
 - Create a classifier class that inherits from MLPNetwork
 - Check lambda parameter is correct - /m /2m etc.
 - Add Softmax function
+- Improve __repr__ function to show act func names only.
 """
 
 from functools import partial
@@ -122,7 +122,8 @@ def arctan_gradient(z, a=None):
     activation function evaluated at z.
 
     Providing a value for a has no effect. The argument is only
-    there for consistency with other activation functions."""
+    there for consistency with other activation functions.
+    """
 
     # There is no faster way to compute this using a
     return 1.0/(z**2 + 1.0)
@@ -138,7 +139,8 @@ def tanh_gradient(z, a=None):
     activation function evaluated at z.
 
     If a=tanh(z) is provided, then the computation will be
-    significantly faster."""
+    significantly faster.
+    """
 
     if a is None:
         a = tanh(z)
@@ -150,7 +152,8 @@ def tanh_gradient(z, a=None):
 
 def linear(z):
     """linear(z) is a linear activation function that
-    returns z."""
+    returns z.
+    """
 
     return z
 
@@ -159,7 +162,8 @@ def linear_gradient(z, a=None):
     linear activation function which is 1.0.
 
     Providing a value for a has no effect. The argument is only
-    there for consistency with other activation functions."""
+    there for consistency with other activation functions.
+    """
 
     return np.ones(z.shape)
 
@@ -180,7 +184,8 @@ def relu_gradient(z, a=None):
     (Rectified Linear Unit) activation function at z.
 
     Providing a value for a has no effect. The argument is only
-    there for consistency with other activation functions."""
+    there for consistency with other activation functions.
+    """
 
     return (z > 0).astype(float)
 
@@ -189,7 +194,8 @@ def relu_gradient(z, a=None):
 def softmax(z):
     """softmax(z) is a vectorized version of the softmax
     function which can be used to simualate a probability
-    distribution (sum of outputs = 0.0)."""
+    distribution (sum of outputs = 0.0).
+    """
 
     # This is needed to prevent numerical overflow
     exps = np.exp(z - np.max(z))
@@ -204,7 +210,8 @@ def softmax_gradient(z, y, a):
     activation function for the inputs z and desired
     output y.
 
-    Providing a value is optional and reduces computation."""
+    Providing a value is optional and reduces computation.
+    """
 
     # TODO: Not sure this is correct. Need to work on it.
     # Might be better to just implement softmax in the cost_function
@@ -398,35 +405,48 @@ class MLPNetwork(object):
                   These are used during learning.
     inputs     -- one-dimensional numpy array of network input values
                   (set to zero initially).
-    outputs    -- one-dimensional numpy array of network output values
-                  (set to zero initially).  This array may be replaced
-                  by any similar-sized array or array slice to allow
-                  output values to be written directly to an
+    outputs    -- one-dimensional numpy array of network output
+                  values (set to zero initially). This array may be
+                  replaced by any similar-sized array or array slice
+                  to allow output values to be written directly to an
                   alternative location without needing to copy values.
+    mu         -- Coefficient used during training to normalize input
+                  data. If the network was trained on normalized
+                  training data, values for mu (means) and sigma
+                  (standard deviations) will be assigned to these
+                  attributes by the training algorithm (see 'train'
+                  below). (Default: 0.0).
+    sigma      -- Coefficient used during training to normalize input
+                  data.  See 'mu' above. (Default: 1.0).
 
     Methods:
-    cost_function      -- calculates the cost function for the network and
-                          the Jacobian matrix given a set of training data.
-                          See the keyword argument 'cost_function' above.
+    cost_function      -- calculates the cost function for the network
+                          and the Jacobian matrix given a set of training
+                          data. See the keyword argument 'cost_function'
+                          above.
     feed_forward       -- process the network in feed-forward mode. The
                           outputs array will be computed as a result.
-    get_theta          -- returns the current weights of each layer as arrays.
-    initialize_weights -- initialize the network weights with random numbers
-    set_inputs         -- this is a safe method to set the values of the input
-                          layer.  You can use 'MLPNetwork.inputs[:] =' but not
-                          'MLPNetwork.inputs ='.
-    predict            -- makes predictions with the network given a set of
-                          inputs.
-    set_weights        -- updates the weights with a new set of weight values.
-    check_gradients    -- runs a test to compare the calculated gradients with
-                          numerical estimates to make sure they are being
-                          calculated correctly.
-    get_act_funcs      -- Return a list of the activation functions from each
-                          layer.
+    get_theta          -- returns the current weights of each layer as
+                          arrays.
+    initialize_weights -- initialize the network weights with random
+                          numbers.
+    set_inputs         -- this is a safe method to set the values of the
+                          input layer.  You can use 'MLPNetwork.inputs[:] ='
+                          but not 'MLPNetwork.inputs ='.
+    predict            -- makes predictions with the network given a set
+                          of inputs.
+    set_weights        -- updates the weights with a new set of weight
+                          values.
+    check_gradients    -- runs a test to compare the calculated gradients
+                          with numerical estimates to make sure they are
+                          being calculated correctly.
+    get_act_funcs      -- Returns a list of the activation functions from
+                          each layer.
     """
 
     def __init__(self, ndim, name=None, act_funcs=None,
-                 cost_function=default_cost_function):
+                 cost_function=default_cost_function, mu=0.0,
+                 sigma=1.0):
 
         self.name = name
         self.dimensions = ndim
@@ -434,6 +454,8 @@ class MLPNetwork(object):
         self.n_inputs = ndim[0]
         self.n_outputs = ndim[-1]
         self.n_neurons = sum(self.dimensions[1:])
+        self.mu = mu
+        self.sigma = sigma
 
         if cost_function == 'mse':
             self.cost_function = cost_function_mse
@@ -558,20 +580,26 @@ class MLPNetwork(object):
         """def set_inputs(self, inputs):
             self.inputs[:] = inputs
 
-        Copies the values provided to the network input array.  This is
-        provided to avoid mistakenly re-assigning self.inputs to a
-        different array by mistake.  This is important because
-        self.inputs is a slice into the output array of the input layer.
+        Copies the values in inputs to the network's input array.
+        This is provided to avoid mistakenly re-assigning self.inputs
+        to a different array by mistake.  This is important because
+        self.inputs is a slice into the output array of the input
+        layer.
 
         In other words, do not do this:
         my_net.inputs = [0.0, 1.0]
 
         Arguments:
-            inputs -- sequence or one-dimensional array of input values."""
+            inputs -- sequence or one-dimensional array of input
+            values.
+        """
+
         self.inputs[:] = inputs
 
     def feed_forward(self):
-        """Calculate neuron activations in all layers in feed-forward mode."""
+        """Calculate neuron activations in all layers in feed-forward
+        mode.
+        """
 
         # This might be unnecessary but check that the input
         # attribute is still a view of the output array of the
@@ -588,13 +616,13 @@ class MLPNetwork(object):
 
     def get_theta(self, weights=None):
         """Returns the weights of each layer as a list of
-            2-dimensional arrays.  Note: these are not copies
-            of the weights so assigning new values is possible.
+        2-dimensional arrays.  Note: these are not copies of the
+        weights so assigning new values is possible.
 
-            If a one-dimensional array of all network weights is
-            provided, the list of arrays is created from this
-            array instead (not from the current weights in the
-            network)."""
+        If a one-dimensional array of all network weights is
+        provided, the list of arrays is created from this array
+        instead (not from the current weights in the network).
+        """
 
         theta = list()
 
@@ -641,14 +669,18 @@ class MLPNetwork(object):
         return theta
 
     def predict(self, inputs, weights=None):
-        """predict produces a set of predictions using the neural network
-        with its current weights or with a new set of weights provided.
-        p = predict(inputs) calculates the output predictions for a set
-        of inputs.
+        """produce predictions using the neural network with its
+        current weights or with a new set of weights provided.
+
+        y_hat = net.predict(x)
+
+        Calculate predictions y_hat for the inputs x.
 
         Arguments:
-            X       -- 2-dimensional array of network inputs
-            weights -- (optional) one-dimensional array of weight values."""
+        inputs  -- 2-dimensional array (m, n_in) of m sets of n input
+                   values.
+        weights -- (optional) one-dimensional array of weight values.
+        """
 
         # convert to 2-dimensional array
         inputs = np.asarray(inputs)
@@ -660,7 +692,8 @@ class MLPNetwork(object):
 
         theta = self.get_theta(weights=weights)
 
-        outputs = inputs
+        # Normalize the inputs
+        outputs = (inputs - self.mu)/self.sigma
 
         # Calculate the outputs of each layer based on the inputs
         # of the layer below, remembering to add a column of ones
@@ -683,12 +716,15 @@ class MLPNetwork(object):
         """Update network weights with set of values provided.
 
         Arguments:
-            weights -- one-dimensional array of weight values."""
+            weights -- one-dimensional array of weight values.
+        """
+
         self.weights[:] = weights
 
     def get_act_funcs(self):
         """Return a list of the activation functions from each
-        layer (excluding the input layer)."""
+        layer (excluding the input layer).
+        """
 
         return [layer.act_func for layer in self.layers[1:]]
 
@@ -734,10 +770,11 @@ class MLPNetwork(object):
     def check_gradients(self, training_data, weights=None, lambda_param=0.0,
                         messages=True):
         """check_gradients uses a numerical approximation to
-            check the gradients calculated by the backpropagation
-            algorithm.  It outputs the analytically and the
-            numerically calculated gradients so you can compare
-            them."""
+        check the gradients calculated by the backpropagation
+        algorithm.  It outputs the analytically and the
+        numerically calculated gradients so you can compare
+        them.
+        """
 
         if messages:
             print('\nChecking backpropagation and gradient calculations...\n')
@@ -818,47 +855,44 @@ class MLPTrainingData(object):
     (e.g. MLPNetwork class).
 
     Keyword Arguments:
-    ndim    -- this should be a list or tuple containing
-               integers representing the number of input and
-               output values in the training data.  If ndim
-               has more than two items, the first item is
-               used to set the number of inputs and the last
-               is used to set the number of outputs.
-    data    -- a two-dimensional array of training
-               data.  The first set of columns should contain
-               input values and the remaining columns should
-               contain the corresponding output values. The
-               width of this array must be equal to ndim[0]
-               + ndim[-1].
-    inputs  -- As an alternative to the above arguments, the
-               input data can be specified as a separate
-               array.
-    outputs -- Similar to inputs above, a separate array of
-               output values.  If inputs and outputs are
-               specified, do not use data and ndim.
-    scaling -- If True, then the input data is normalized
-               otherwise None.
+    ndim    -- this should be a list or tuple containing integers
+               representing the number of input and output values
+               in the training data.  If ndim has more than two
+               items, the first item is used to set the number of
+               inputs and the last is used to set the number of
+               outputs.
+    data    -- a two-dimensional array of training data. The first
+               set of columns should contain input values and the
+               remaining columns should contain the corresponding
+               output values. The width of this array must be equal
+               to ndim[0] + ndim[-1].
+    inputs  -- As an alternative to the above arguments, the input
+               data can be specified as a separate array.
+    outputs -- Similar to inputs above, a separate array of output
+               values. If inputs and outputs are specified, do not
+               use data and ndim.
+    scaling -- If True, then the input data is normalized. Default
+               is False.
 
     Attributes:
     n_in      -- (int) number of values in input data
     n_out     -- (int) number of values in output data
     data      -- (ndarray) array of training data.  First n_in
-                 columns are the input data.  Last n_out
-                 columns are the output data.  If training
-                 data was initialised using two separate arrays
-                 (inputs, outputs) instead of data, then data
-                 will be set to None.
+                 columns are the input data.  Last n_out columns are
+                 the output data.  If training data was initialised
+                 using two separate arrays (inputs, outputs) instead
+                 of data, then data will be set to None.
     inputs    -- (ndarray) array of input data
     outputs   -- (ndarray) array of output data
     n_subsets -- (int) number of subsets of data.  This attribute
                  will only exist if the method split was called.
     subsets   -- (list) list of data subsets (each subset will be
-                 an ndarray).  This attribute will only exist if
-                 the method split() was called.
+                 an ndarray).  This attribute will only exist if the
+                 method split() was called.
     """
 
     def __init__(self, data=None, ndim=None, name=None,
-                 inputs=None, outputs=None, scaling=None):
+                 inputs=None, outputs=None, scaling=False):
 
         self.name = name
 
@@ -927,6 +961,7 @@ class MLPTrainingData(object):
                     )
 
         if scaling is True:
+
                 # Feature scaling parameters (mean, scale)
                 self.mu = np.mean(self.inputs, axis=0)
                 self.sigma = np.std(self.inputs, axis=0)
@@ -941,19 +976,27 @@ class MLPTrainingData(object):
                 # Normalise the training data
                 self.inputs[:] = (self.inputs - self.mu)/self.sigma
 
-    def split(self, ratios=(0.75, 0.25), names=('Training set', 'Validation set'), shuffle=True):
+        else:
+            self.mu = 0.0
+            self.sigma = 1.0
+
+
+
+    def split(self, ratios=(0.75, 0.25), names=('Training set',
+              'Validation set'), shuffle=True):
         """Split training data points into a number of sub-sets
         (randomly). Useful for separating training data from
         validation and test data.
 
-        Once this function has been executed the training data
-        set will have an attribute called subset which is a list
-        of ndarrays of the sub-divided data.
+        Once this function has been executed the training data set
+        will have an attribute called subset which is a list of
+        ndarrays of the sub-divided data.
 
         ratios - A list or tuple containing a fraction for each
                  desired subset.
-        names  - List or tuple of strings containing names for
-                 each sub-set."""
+        names  - List or tuple of strings containing names for each
+                 sub-set.
+        """
 
         if sum(ratios) != 1.0:
             raise ValueError("When splitting training data into subsets,"
@@ -989,7 +1032,10 @@ class MLPTrainingData(object):
             finish = start + r
             inputs = self.inputs[start:finish, :]
             outputs = self.outputs[start:finish, :]
-            self.subsets.append(MLPTrainingData(inputs=inputs, outputs=outputs, name=names[i]))
+            self.subsets.append(
+                MLPTrainingData(inputs=inputs, outputs=outputs,
+                                name=names[i])
+            )
             start = finish
 
     def __repr__(self):
@@ -1018,7 +1064,6 @@ class MLPTrainingData(object):
 # Functions and in future a class of object to manage training
 # of one or more networks.
 
-
 def feed_forward(net, A, Z, theta):
 
     m = A[0].shape[0]
@@ -1036,7 +1081,6 @@ def feed_forward(net, A, Z, theta):
             A[j][:] = layer.act_func[0](Z[j])
         else:
             A[j][:,1:] = layer.act_func[0](Z[j])
-
 
 def back_prop(net, sigma, A, Z, theta, theta_grad, lambda_param):
 
@@ -1137,32 +1181,29 @@ def initialize_arrays(net, m):
         'theta_grad': theta_grad
     }
 
-
-
 def train(net, training_data, max_iter=1, update=True, disp=False,
-           method='L-BFGS-B', lambda_param=0.0, gtol=1e-6, ftol=0.01):
-    """*** TODO: This docstring needs updating ***
-
-    Trains a network (net) on a set of training data (data)
-    using the scipy.optimize.minimize function which will minimize
+           method='L-BFGS-B', lambda_param=0.0,
+           gtol=1e-6, ftol=0.01):
+    """Trains a network (net) on a set of training data (data) using
+    the scipy.optimize.minimize function which will minimize
     the a cost function (net.cost_function) by changing the weights
     (net.weights).
 
-    Returns a scipy.optimize.OptimizeResult object. See the
-    scipy documentation for a description of its attributes.
+    Returns a scipy.optimize.OptimizeResult object. See the scipy
+    documentation for a description of its attributes.
 
     Arguments:
-    net          -- MLPNetwork object.
-    data         -- MLPTrainingData object.
+    net           -- MLPNetwork object.
+    training_data -- MLPTrainingData object.
 
     Keyword Arguments:
     max_iter     -- Maximum number of iterations of the solver
     update       -- Set to False if you don't want to update the
                     network's weights at the end of the training.
                     Default is True.
-    disp         -- Set to True if you want the minimize function
-                    to print convergence progress messages during
-                    the training.
+    disp         -- Set to True if you want the minimize function to
+                    print convergence progress messages during the
+                    training.
     method       -- Select the solver to use.  It must be a solver
                     that uses a Jacobian matrix (of gradients).
                     Default is 'L-BFGS-B'.
@@ -1175,17 +1216,17 @@ def train(net, training_data, max_iter=1, update=True, disp=False,
                     function is <= to ftol.  Default is 0.01.
     """
 
-    X, Y = training_data.inputs, training_data.outputs
+    # Number of training examples
+    m = training_data.inputs.shape[0]
 
-    # Number of training data points
-    m = X.shape[0]
+    assert training_data.outputs.shape[0] == m
 
-    # Prepare all arrays (empty)
+    # Prepare arrays (empty)
     # A, Z, sigma, grad, theta_grad
     arrays = initialize_arrays(net, m)
 
     # Assign training data inputs to A[0]
-    arrays['A'][0][:, 1:] = X
+    arrays['A'][0][:, 1:] = training_data.inputs
 
     cost_func = partial(
         net.cost_function,
@@ -1196,14 +1237,7 @@ def train(net, training_data, max_iter=1, update=True, disp=False,
         cache=arrays
     )
 
-    #cost_func = partial(
-    #    net.cost_function,
-    #    data.inputs,
-    #    data.outputs,
-    #    jac=True,
-    #    lambda_param=lambda_param
-    #)
-
+    # Run solver
     res = minimize(
         cost_func,
         net.weights,
@@ -1211,16 +1245,20 @@ def train(net, training_data, max_iter=1, update=True, disp=False,
         jac=True,
         options={
             'gtol': gtol,
-            'ftol': ftol * np.finfo(float).eps,
+            'ftol': ftol*np.finfo(float).eps,
             'disp': disp,
             'maxiter': max_iter
         }
     )
-    # Other options:
+    # Other solver methods:
     # - CG, BFGS, Newton-CG, L-BFGS-B, TNC, SLSQP, dogleg, trust-ncg
 
     if update:
         net.weights[:] = res.x
+
+    # Transfer the normalization coefficients used in training to the
+    # network so they can be used later for prediction.
+    net.mu, net.sigma = training_data.mu, training_data.sigma
 
     print("Solver returned the following message:\n%s" % str(res.message))
 
@@ -1229,34 +1267,38 @@ def train(net, training_data, max_iter=1, update=True, disp=False,
 
 def cost_function_log(net, training_data, weights=None,
                       lambda_param=0.0, jac=True, cache=None):
-    """
-    *** TODO: This docstring needs updating ***
+    """Computes the cost function (J) and gradients (grad) of the
+    network on the training_data with the logistic cost function*
+    using back-propagation.
 
-    (J, grad) = cost_function_log(X, Y) computes the cost (J)
-    using the logistic cost function* and gradients (grad) of
-    the network using back-propagation for the given set of
-    training data (X, Y).
-
-    *Note: This cost function is also known as the Bernoulli
-    negative log-likelihood and binary cross-entropy.  It
-    should only be used for problems such as classification
-    where y values are either 0.0 or 1.0.
+    *Note: This is also known as the Bernoulli negative log-
+    likelihood and binary cross-entropy. It should only be used for
+    problems such as classification where y values are either 0.0
+    or 1.0.
 
     Arguments:
-    X -- a set of training data points containing m rows of
-           network input data
-    Y -- a set of desired network outputs for the training
-           data containing m rows of output data
+    net           -- A neural network model (MLPNetwork).
+    training_data -- A set of training data (MLPTrainingData).
 
     Keyword arguments:
-    weights       -- Provide a new set of weights to calculate the cost
-                     function (current network weights will not be
-                     affected).  If not specified, the cost function will
-                     use the current weights stored in the network.
-    lambda_param  -- Regularization term.  If not specified then default
-                     is lambda_param=0.0 (i.e. no regularization).
-    jac           -- If set to None or False then this function does not
-                     calculate or return the Jacobian matrix (of gradients).
+    weights       -- Provide a new set of weights to calculate the
+                     cost function (current network weights will not
+                     be affected).  If not specified, the cost
+                     function will use the current weights stored in
+                     the network.
+    lambda_param  -- Regularization term.  If not specified then
+                     default is lambda_param=0.0 (i.e. no
+                     regularization).
+    jac           -- If set to None or False then this function does
+                     not calculate or return the Jacobian matrix (of
+                     gradients).
+    cache         -- (optional) provide a set of existing arrays
+                     to avoid re-initializaing arryas each time this
+                     cost function is calculated. If cache is None,
+                     new (empty) arrays will be initialized.
+
+    Returns:
+    (J, grad)     -- Cost and gradients matrix.
     """
 
     # Inputs and desired outputs from training data
@@ -1338,33 +1380,37 @@ def cost_function_log(net, training_data, weights=None,
 
 def cost_function_mse(net, training_data, weights=None,
                       lambda_param=0.0, jac=True, cache=None):
-    """
-    *** TODO: This docstring needs updating ***
+    """Computes the cost function (J) and gradients (grad) of the
+    network on the training_data with the mean-squared-error cost
+    function* using back-propagation.
 
-    (J, grad) = cost_function_mse(X, Y) computes the cost (J)
-    using the mean-squared-error function* and gradients (grad)
-    of the network using back-propagation for the given set of
-    training data (X, Y).
-
-    *Note: This cost function is also known as the maximum
-    likelihood or sum-squared error method.  It is generally
-    useful for regression and function approximation problems.
+    *Note: This cost function is also known as the maximum likelihood
+    or sum-squared error method. It is generally useful for
+    regression and function approximation problems.
 
     Arguments:
-    X -- a set of training data points containing m rows of
-           network input data
-    Y -- a set of desired network outputs for the training
-           data containing m rows of output data
+    net           -- A neural network model (MLPNetwork).
+    training_data -- A set of training data (MLPTrainingData).
 
     Keyword arguments:
-    weights       -- Provide a new set of weights to calculate the cost
-                     function (current network weights will not be
-                     affected).  If not specified, the cost function will
-                     use the current weights stored in the network.
-    lambda_param  -- Regularization term.  If not specified then default
-                     is lambda_param=0.0 (i.e. no regularization).
-    jac           -- If set to None or False then this function does not
-                     calculate or return the Jacobian matrix (of gradients).
+    weights       -- Provide a new set of weights to calculate the
+                     cost function (current network weights will not
+                     be affected).  If not specified, the cost
+                     function will use the current weights stored in
+                     the network.
+    lambda_param  -- Regularization term.  If not specified then
+                     default is lambda_param=0.0 (i.e. no
+                     regularization).
+    jac           -- If set to None or False then this function does
+                     not calculate or return the Jacobian matrix (of
+                     gradients).
+    cache         -- (optional) provide a set of existing arrays
+                     to avoid re-initializaing arryas each time this
+                     cost function is calculated. If cache is None,
+                     new (empty) arrays will be initialized.
+
+    Returns:
+    (J, grad)     -- Cost and gradients matrix.
     """
 
     # Inputs and desired outputs from training data
@@ -1433,15 +1479,15 @@ def cost_function_mse(net, training_data, weights=None,
 # THE FOLLOWING FUNCTION IS ONLY FOR TESTING!
 
 def initialize_weights(fan_out, fan_in):
-    """initialize_weights Initialize the weights of a layer with fan_in
-        incoming connections and fan_out outgoing connections using a fixed
-        strategy, this will help you later in debugging
-        W = initialize_weights(fan_in, fan_out) initializes the weights
-        of a layer with fan_in incoming connections and fan_out outgoing
-        connections using a fix set of values
+    """Initialize the weights of a layer with fan_in incoming
+    connections and fan_out outgoing connections using a using
+    a fix set of values.  This will help you later in debugging.
 
-        Note that W should be set to a matrix of size(1 + fan_in, fan_out) as
-        the first row of W handles the 'bias' terms."""
+    W = initialize_weights(fan_in, fan_out)
+
+    Note that W should be set to a matrix of size(1 + fan_in,
+    fan_out) as the first row of W handles the 'bias' terms.
+    """
 
     # Set W to zeros
     n = fan_out*(1 + fan_in)
@@ -1457,7 +1503,6 @@ def initialize_weights(fan_out, fan_in):
             ) / 10.0
 
     return W
-
 
 # THE FOLLOWING FUNCTION IS ONLY FOR TESTING!
 
@@ -1486,8 +1531,13 @@ def print_list(x):
     print("\n".join([str(i) for i in x]))
 
 def xor_test(n=10, max_iter=100):
+    """Run a series of tests training different networks with
+    different parameters and display results for most
+    successfull networks. The training data is based on theta
+    XOR logic gate.
+    """
 
-    # Training data should create a smooth surface
+    # This training data should create a smooth surface
     data = (
         (0.0, 0.0, 0.0),
         (0.0, 1.0, 1.0),
@@ -1542,7 +1592,7 @@ def xor_test(n=10, max_iter=100):
         print("Activation functions: %s" % str(act_func_names))
         print("Cost function: %s" % str(xor.cost_function))
 
-        lambda_param = np.random.choice([0.0, 0.01, 0.1, 0.5, 0.8, 1.0])
+        lambda_param = np.random.choice([0.0, 0.001, 0.01, 0.1, 0.5, 1.0])
         print("lambda: %f" % lambda_param)
 
         error = xor.check_gradients(training_data,
@@ -1569,11 +1619,12 @@ def xor_test(n=10, max_iter=100):
 
         success = True if cost < 0.01 else False
 
-        train_record.append((success, tuple(ndim), tuple(act_func_names), lambda_param))
+        train_record.append((success, tuple(ndim), tuple(act_func_names),
+                            lambda_param))
 
     n_successes = sum((item[0] for item in train_record))
-    print("\nSummary: %d out of %d tests successful after %d-%d iterations." % \
-            (
+    print("\nSummary: %d out of %d tests successful after %d-%d "
+          "iterations." % (
                 n_successes,
                 n,
                 max_iter_choices[0],
@@ -1588,7 +1639,8 @@ def xor_test(n=10, max_iter=100):
         n_layers_best = top_ranked(results)[0][0]
 
         print("\nTotal number of neurons:")
-        results = [sum(item[1][1:]) for item in train_record if item[0] is True]
+        results = [sum(item[1][1:]) for item in train_record if item[0] is
+                   True]
         print_list([("%d: %d" % item) for item in top_ranked(results)[0:5]])
 
         print("\nOutput layer act_func:")
@@ -1596,7 +1648,8 @@ def xor_test(n=10, max_iter=100):
         print_list([("%s: %d" % item) for item in top_ranked(results)[0:5]])
 
         print("\nAct_func combination (%d layers):" % n_layers_best)
-        results = [item[2] for item in train_record if item[0] is True and (len(item[1]) - 1) == n_layers_best]
+        results = [item[2] for item in train_record if item[0] is True and
+                   (len(item[1]) - 1) == n_layers_best]
         print_list([("%s: %d" % item) for item in top_ranked(results)[0:5]])
 
         print("\nLambda:")
@@ -1604,13 +1657,13 @@ def xor_test(n=10, max_iter=100):
         print_list([("%s: %d" % item) for item in top_ranked(results)[0:5]])
 
 def check_gradients(lambda_param=0.0):
-    """check_gradients Creates a small neural network to check the
-        backpropagation gradients
-        check_gradients(lambda) Creates a small neural network to check the
-        backpropagation gradients, it will output the analytical gradients
-        produced by your backprop code and the numerical gradients (computed
-        using computeNumericalGradient). These two gradient computations should
-        result in very similar values."""
+    """Creates a small neural network to check the backpropagation
+    gradients check_gradients(lambda) Creates a small neural network
+    to check the backpropagation gradients, it will output the
+    analytical gradients produced by your backprop code and the
+    numerical gradients (computed using computeNumericalGradient).
+    These two gradient computations should result in very similar values.
+    """
 
     input_layer_size = 3
     hidden_layer_size = 5
@@ -1690,7 +1743,8 @@ def checkActFuncGradients(func_list):
     """Function to check activation gradient functions are
     correct. func_list should be a list of tuples.  Each
     tuple should contain an activation function [item 0]
-    and its derivative [item 1]."""
+    and its derivative [item 1].
+    """
 
     x_range = np.arange(-1.5, 1.5, 0.5)
 
@@ -1722,9 +1776,9 @@ def checkActFuncGradients(func_list):
 #
 
 def compute_derivative_numerically(J, theta, epsilon=1.0e-7):
-    """Returns a numerical estimate of the partial derivatives
-    of J (the gradients) for each value of theta using
-    linear approximation."""
+    """Returns a numerical estimate of the partial derivatives of J
+    (the gradients) for each value of theta using linear approximation.
+    """
 
     numgrad = np.zeros(theta.shape)
     perturb = np.zeros(theta.shape)
@@ -1768,7 +1822,8 @@ def compute_function_gradient(f, x, e=1.0e-7):
 
 def main():
     """Main function - this will run an example implementation to
-    test the module is working."""
+    test the module is working.
+    """
 
     import matplotlib.pyplot as plt
 
@@ -1840,7 +1895,8 @@ def main():
 
     print("Begin training...")
 
-    res = train(xor, training_data, max_iter=1000, lambda_param=lambda_param, disp=True)
+    res = train(xor, training_data, max_iter=1000, lambda_param=lambda_param,
+                disp=True)
 
     print("Error after learning:", res.fun)
 
