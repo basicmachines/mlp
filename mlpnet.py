@@ -2,7 +2,7 @@
 """Neural Network Simulator
 
 @author: Bill Tubbs
-Revision date: 2017-01-07
+Revision date: 2018-04-25
 
 This Python module provides classes to simulate Multi-Layer
 Perceptron (MLP) neural networks for machine learning
