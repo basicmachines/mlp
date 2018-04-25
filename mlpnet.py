@@ -755,17 +755,17 @@ class MLPNetwork(object):
 
         s.append("ndim=%s" % self.dimensions.__repr__())
 
-        act_func_names = self.get_act_func_names()
-        if len(act_func_names) == 1:
-            s.append("act_funcs=%s" % act_func_names[0].__repr__())
-        else:
-            s.append("act_funcs=%s" % act_func_names.__repr__())
-
         try:
             if self.name is not None:
                 s.append("name=%s" % self.name.__repr__())
         except AttributeError:
             pass
+
+        act_func_names = self.get_act_func_names()
+        if len(act_func_names) == 1:
+            s.append("act_funcs=%s" % act_func_names[0].__repr__())
+        else:
+            s.append("act_funcs=%s" % act_func_names.__repr__())
 
         if self.cost_function is cost_function_log:
             cost_function_name = 'log'
