@@ -28,6 +28,7 @@ future
  - needed if running Python 2 for builtins such as input()
 
 TODO list:
+- Implement a save method for MLPNetwork
 - Find out how many times get_theta is running and consider doing
   once only at network initialization
 - Check array caching is working in train()
@@ -48,8 +49,6 @@ TODO list:
 - Check lambda parameter is correct - /m /2m etc.
 - Add Softmax function, maybe add ELU (exponential linear unit)
 - Improve __repr__ function to show act func names only.
-- Maybe implement mini-batch training.
-- Maybe implement momentum or Adam.
 """
 
 from functools import partial
